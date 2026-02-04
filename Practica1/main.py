@@ -2,63 +2,35 @@ import requests
 import json
 import time
 import uuid
-import os
 from openai import OpenAI
 
 # CONFIGURACIÓN
 CLIENT_LLM = OpenAI(
-    base_url="http://127.0.0.1:11434",
+    base_url="http://127.0.0.1:11434/v1",
     api_key="ollama"
 )
-MODEL_NAME = "qwen3-vl:8b"
-BASE_URL = "http://147.96.81.252:8000"
+MODEL_NAME = "llama3.2:3b"
+BASE_URL = "http://147.96.81.252:7719"
 
-# VARIABLES GLOBALES DEL AGENTE
 MI_ALIAS = "grok"
-ARCHIVO_REPUTACION = "reputacion.json"
 
-class GestorReputacion:
-    def __init__(self, archivo):
-        self.archivo = archivo
-        self.scores = self._cargar()
+# Estado global para validaciones locales
+estado_global = {
+    "Recursos": {}
+}
 
-    def _cargar(self):
-        if not os.path.exists(self.archivo):
-            return {}
-        try:
-            with open(self.archivo, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-
-    def _guardar(self):
-        with open(self.archivo, 'w') as f:
-            json.dump(self.scores, f, indent=4)
-
-    def obtener_score(self, jugador):
-        return self.scores.get(jugador, 0)
-
-    def actualizar_score(self, jugador, delta):
-        actual = self.obtener_score(jugador)
-        self.scores[jugador] = actual + delta
-        self._guardar()
-        return self.scores[jugador]
-
-reputacion = GestorReputacion(ARCHIVO_REPUTACION)
-
+# ---------------- API ----------------
 
 def api_get_info():
     try:
-        resp = requests.get(f"{BASE_URL}/info")
-        return resp.json()
-    except Exception as e:
-        return {"error": str(e)}
+        return requests.get(f"{BASE_URL}/info").json()
+    except:
+        return {}
 
 def api_get_gente():
     try:
-        resp = requests.get(f"{BASE_URL}/gente")
-        return resp.json()
-    except Exception as e:
+        return requests.get(f"{BASE_URL}/gente").json()
+    except:
         return []
 
 def api_post_carta(destinatario, asunto, cuerpo):
@@ -71,201 +43,259 @@ def api_post_carta(destinatario, asunto, cuerpo):
         "id": carta_id,
         "fecha": time.strftime("%Y-%m-%d %H:%M")
     }
-    try:
-        requests.post(f"{BASE_URL}/carta", json=payload)
-        return f"Carta enviada a {destinatario} con ID {carta_id}"
-    except Exception as e:
-        return f"Error enviando carta: {str(e)}"
+    requests.post(f"{BASE_URL}/carta", json=payload)
 
 def api_post_paquete(destinatario, recursos):
-    full_pkg = {
-        "madera": recursos.get("madera", 0),
-        "oro": recursos.get("oro", 0),
-        "trigo": recursos.get("trigo", 0),
-        "tela": recursos.get("tela", 0),
-        "ladrillos": recursos.get("ladrillos", 0),
-        "piedra": recursos.get("piedra", 0)
-    }
-    try:
-        requests.post(f"{BASE_URL}/paquete/{destinatario}", json=full_pkg)
-        return f"Paquete enviado a {destinatario}: {json.dumps(full_pkg)}"
-    except Exception as e:
-        return f"Error enviando paquete: {str(e)}"
+    requests.post(f"{BASE_URL}/paquete/{destinatario}", json=recursos)
 
 def api_delete_mail(uid):
-    try:
-        requests.delete(f"{BASE_URL}/mail/{uid}")
-        return f"Correo {uid} eliminado."
-    except Exception as e:
-        return f"Error eliminando correo: {str(e)}"
+    requests.delete(f"{BASE_URL}/mail/{uid}")
 
 def registrar_identidad():
-    try:
-        requests.post(f"{BASE_URL}/alias/{MI_ALIAS}")
-        print(f"Identidad registrada: {MI_ALIAS}")
-    except:
-        pass
+    requests.post(f"{BASE_URL}/alias/{MI_ALIAS}")
 
-def construir_contexto():
-    """Recopila toda la info necesaria para el prompt del usuario"""
+# ---------------- ESTADO ----------------
+
+def obtener_estado():
     info = api_get_info()
     gente = api_get_gente()
-    
-    # Filtramos la gente para no enviarnos cartas a nosotros mismos
-    otros_jugadores = [p for p in gente if p != MI_ALIAS]
-    
-    contexto = f"""
-    --- ESTADO ACTUAL ---
-    Mi Alias: {MI_ALIAS}
-    Mis Recursos: {json.dumps(info.get('Recursos', {}))}
-    Mis Objetivos: {json.dumps(info.get('Objetivo', {}))}
-    
-    --- ENTORNO SOCIAL ---
-    Otros Jugadores Disponibles: {', '.join(otros_jugadores)}
-    
-    --- BUZÓN DE ENTRADA ---
-    {json.dumps(info.get('Buzon', {}), indent=2)}
-    """
-    return contexto
+    otros = [p for p in gente if p != MI_ALIAS]
+
+    recursos = info.get("Recursos", {})
+    objetivo = info.get("Objetivo", {})
+    buzon = info.get("Buzon", {})
+
+    materiales_actuales = list(set(recursos.keys()) | set(objetivo.keys()))
+
+    estado = {
+        "Recursos": recursos,
+        "Objetivo": objetivo,
+        "Buzon": buzon,
+        "Otros": otros,
+        "Materiales": materiales_actuales
+    }
+
+    estado_global["Recursos"] = recursos
+    return estado
+
+# ---------------- PROMPT DINÁMICO ----------------
+
+def construir_system_prompt(estado, correo_actual=None):
+    base = f"""
+Eres un agente comerciante autónomo en un juego de recursos.
+Tu alias es {MI_ALIAS}.
+
+--- ESTADO ACTUAL ---
+Mis Recursos: {json.dumps(estado['Recursos'])}
+Mi Objetivo: {json.dumps(estado['Objetivo'])}
+Materiales conocidos actualmente: {estado['Materiales']}
+Otros jugadores: {estado['Otros']}
+"""
+
+    if correo_actual:
+        base += f"""
+--- PROCESANDO ESTE CORREO ---
+{json.dumps(correo_actual, indent=2)}
+
+REGLAS PARA ESTE CORREO:
+- Decide SOLO sobre este correo.
+- Si te ofrecen recursos que te ayudan a cumplir el Objetivo:
+    - Acepta el trato:
+        - enviar_paquete
+        - enviar_carta confirmando el acuerdo
+        - eliminar_correo
+- Si no te interesa:
+    - Rechaza educadamente o pide más info
+    - eliminar_correo
+
+REGLA SOBRE MATERIALES DESCONOCIDOS:
+- Si te ofrecen un material que no aparece en tu Objetivo:
+    - No lo aceptes directamente
+    - Pide más información
+"""
+    else:
+        base += """
+--- NO HAY CORREOS ---
+REGLAS:
+- Detecta qué recursos te faltan para cumplir el Objetivo.
+- Detecta qué recursos te sobran.
+- Propón un intercambio simple 1 a 1 con otro jugador usando enviar_carta.
+- No envíes paquetes sin un acuerdo previo por carta.
+"""
+
+    return base
+
+# ---------------- VALIDACIÓN ----------------
+
+def filtrar_recursos_validos(recursos_a_enviar):
+    mis_recursos = estado_global["Recursos"]
+
+    filtrados = {}
+    for mat, cant in recursos_a_enviar.items():
+        if cant > 0 and mis_recursos.get(mat, 0) >= cant:
+            filtrados[mat] = cant
+        else:
+            print(f" Recurso inválido o insuficiente: {mat} -> {cant}")
+
+    return filtrados
+
+# ---------------- TOOLS ----------------
 
 def ejecutar_tool_call(tool_call):
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments)
-    
-    print(f"⚙️ Ejecutando Tool: {name}")
-    
+
+    print(f" Ejecutando tool: {name}")
+
     if name == "enviar_carta":
-        return api_post_carta(args["destinatario"], args["asunto"], args["cuerpo"])
-    
+        api_post_carta(args["destinatario"], args["asunto"], args["cuerpo"])
+
     elif name == "enviar_paquete":
-        return api_post_paquete(args["destinatario"], args["recursos"])
-        
+        recursos_raw = args["recursos"]
+        if isinstance(recursos_raw, str):
+            try:
+                recursos_raw = json.loads(recursos_raw)
+            except Exception as e:
+                print("No se pudo parsear recursos:", recursos_raw, e)
+                return
+
+        recursos_filtrados = filtrar_recursos_validos(recursos_raw)
+        if recursos_filtrados:
+            api_post_paquete(args["destinatario"], recursos_filtrados)
+        else:
+            print(" No se envió paquete: recursos inválidos.")
+        if recursos_filtrados:
+            api_post_paquete(args["destinatario"], recursos_filtrados)
+        else:
+            print("No se envió paquete: recursos inválidos.")
+
     elif name == "eliminar_correo":
-        return api_delete_mail(args["uid"])
-        
-    return "Tool no encontrada"
+        api_delete_mail(args["uid"])
+
+# ---------------- CICLO ----------------
 
 def ciclo_principal():
     registrar_identidad()
-    print("Agente Comercial Iniciado. Presiona Ctrl+C para detener.")
-    
+    print("Agente Comercial iniciado")
+
     while True:
-        print("\n--- NUEVO CICLO ---")
-        
-        # 1. Obtener contexto global
-        contexto_usuario = construir_contexto()
-        print(f"📊 Estado analizado. Recursos actuales vs Objetivos.")
+        estado = obtener_estado()
+        buzon = estado["Buzon"] or {}
 
-        # 2. Consultar al LLM
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Analiza la situación y actúa:\n{contexto_usuario}"}
-        ]
+        # Procesar correos uno a uno
+        for uid, correo in buzon.items():
+            system_prompt = construir_system_prompt(estado, correo)
 
-        try:
-            response = CLIENT_LLM.chat.completions.create(
-                model=MODEL_NAME,
-                messages=messages,
-                tools=tools_schema,
-                tool_choice="auto"
-            )
-            
-            msg = response.choices[0].message
-            
-            # 3. Verificar si el LLM quiere usar herramientas
-            if msg.tool_calls:
-                for tool in msg.tool_calls:
-                    resultado = ejecutar_tool_call(tool)
-                    print(f"   ↳ Resultado: {resultado}")
-                    
-            else:
-                print("El agente decidió no tomar ninguna acción en este turno.")
-                if msg.content:
-                    print(f"   Pensamiento: {msg.content}")
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Procesa este correo."}
+            ]
 
-        except Exception as e:
-            print(f"Error en el ciclo LLM: {e}")
+            try:
+                response = CLIENT_LLM.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    tools=tools_schema,
+                    tool_choice="auto"
+                )
 
-        # 4. Esperar antes del siguiente ciclo
+                msg = response.choices[0].message
+
+                if msg.tool_calls:
+                    for tool in msg.tool_calls:
+                        ejecutar_tool_call(tool)
+                else:
+                    print("No se realizó acción sobre este correo.")
+
+            except Exception as e:
+                print("Error LLM (correo):", e)
+
+        # Si no hay correos, proponer trade
+        if not buzon:
+            system_prompt = construir_system_prompt(estado)
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Propón un intercambio beneficioso."}
+            ]
+
+            try:
+                response = CLIENT_LLM.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    tools=tools_schema,
+                    tool_choice="auto"
+                )
+
+                msg = response.choices[0].message
+
+                if msg.tool_calls:
+                    for tool in msg.tool_calls:
+                        ejecutar_tool_call(tool)
+                else:
+                    print("No se propuso ningún intercambio.")
+
+            except Exception as e:
+                print("Error LLM (propuesta):", e)
+
         time.sleep(10)
 
-if __name__ == "__main__":
-    SYSTEM_PROMPT = """
-    Eres un Agente Comerciante Autónomo en un juego de recursos.
-    Tu ID es: """ + MI_ALIAS + """
-    
-    TUS TAREAS EN ORDEN DE PRIORIDAD:
-    1. Revisa tu 'Buzon'. Si hay mensajes de oferta:
-       - Analiza si el intercambio te beneficia (te acerca a tu 'Objetivo').
-       - Si es bueno: Usa 'enviar_paquete' para pagar y 'enviar_carta' para confirmar. Luego 'eliminar_correo'.
-       - Si es malo: Usa 'eliminar_correo' (o responde rechazando).
-    
-    2. Revisa tus 'Recursos' vs 'Objetivo':
-       - Identifica qué te falta y qué te sobra.
-    
-    3. Si te falta algo y no tienes mensajes:
-       - Elige un jugador de la lista 'Otros Jugadores'.
-       - Usa 'enviar_carta' para proponer un intercambio (Ej: "Te doy X por Y").
-    
-    4. NO envíes paquetes a menos que sea un trato cerrado o una estrategia clara.
-    """
+# ---------------- TOOLS SCHEMA ----------------
 
-    tools_schema = [
-        {
-            "type": "function",
-            "function": {
-                "name": "enviar_carta",
-                "description": "Envia una carta/email a otro jugador.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "destinatario": {"type": "string"},
-                        "asunto": {"type": "string"},
-                        "cuerpo": {"type": "string"}
-                    },
-                    "required": ["destinatario", "asunto", "cuerpo"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "enviar_paquete",
-                "description": "Envia recursos (madera, oro, etc) a otro jugador.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "destinatario": {"type": "string"},
-                        "recursos": {
-                            "type": "object",
-                            "properties": {
-                                "madera": {"type": "integer"},
-                                "oro": {"type": "integer"},
-                                "trigo": {"type": "integer"},
-                                "tela": {"type": "integer"},
-                                "ladrillos": {"type": "integer"},
-                                "piedra": {"type": "integer"}
-                            }
-                        }
-                    },
-                    "required": ["destinatario", "recursos"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "eliminar_correo",
-                "description": "Borra un correo procesado usando su ID (uid).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "uid": {"type": "string"}
-                    },
-                    "required": ["uid"]
-                }
+tools_schema = [
+    {
+        "type": "function",
+        "function": {
+            "name": "enviar_carta",
+            "description": "Envía una carta a otro jugador",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "destinatario": {"type": "string"},
+                    "asunto": {"type": "string"},
+                    "cuerpo": {"type": "string"}
+                },
+                "required": ["destinatario", "asunto", "cuerpo"]
             }
         }
-    ]
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enviar_paquete",
+            "description": "Envía recursos dinámicos a otro jugador",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "destinatario": {"type": "string"},
+                    "recursos": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "required": ["destinatario", "recursos"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "eliminar_correo",
+            "description": "Elimina un correo del buzón",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string"}
+                },
+                "required": ["uid"]
+            }
+        }
+    }
+]
 
+# ---------------- MAIN ----------------
+
+if __name__ == "__main__":
     ciclo_principal()
