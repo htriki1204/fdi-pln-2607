@@ -14,23 +14,30 @@ BASE_URL = "http://147.96.81.252:7719"
 
 MI_ALIAS = "grok"
 
-# Estado global para validaciones locales
+# Estado global
 estado_global = {
-    "Recursos": {}
+    "Recursos": {},
+    "OfertasPendientes": []
 }
 
 # ---------------- API ----------------
 
 def api_get_info():
     try:
-        return requests.get(f"{BASE_URL}/info").json()
-    except:
+        r = requests.get(f"{BASE_URL}/info")
+        print("GET /info ->", r.status_code)
+        return r.json()
+    except Exception as e:
+        print("Error GET /info:", e)
         return {}
 
 def api_get_gente():
     try:
-        return requests.get(f"{BASE_URL}/gente").json()
-    except:
+        r = requests.get(f"{BASE_URL}/gente")
+        print("GET /gente ->", r.status_code)
+        return r.json()
+    except Exception as e:
+        print("Error GET /gente:", e)
         return []
 
 def api_post_carta(destinatario, asunto, cuerpo):
@@ -43,16 +50,32 @@ def api_post_carta(destinatario, asunto, cuerpo):
         "id": carta_id,
         "fecha": time.strftime("%Y-%m-%d %H:%M")
     }
-    requests.post(f"{BASE_URL}/carta", json=payload)
+    try:
+        r = requests.post(f"{BASE_URL}/carta", json=payload)
+        print("POST /carta ->", r.status_code, "dest:", destinatario, "asunto:", asunto)
+    except Exception as e:
+        print("Error enviando carta:", e)
 
 def api_post_paquete(destinatario, recursos):
-    requests.post(f"{BASE_URL}/paquete/{destinatario}", json=recursos)
+    try:
+        r = requests.post(f"{BASE_URL}/paquete/{destinatario}", json=recursos)
+        print("POST /paquete ->", r.status_code, "dest:", destinatario, "recursos:", recursos)
+    except Exception as e:
+        print("Error enviando paquete:", e)
 
 def api_delete_mail(uid):
-    requests.delete(f"{BASE_URL}/mail/{uid}")
+    try:
+        r = requests.delete(f"{BASE_URL}/mail/{uid}")
+        print("DELETE /mail ->", r.status_code, "uid:", uid)
+    except Exception as e:
+        print("Error borrando mail:", e)
 
 def registrar_identidad():
-    requests.post(f"{BASE_URL}/alias/{MI_ALIAS}")
+    try:
+        r = requests.post(f"{BASE_URL}/alias/{MI_ALIAS}")
+        print("POST /alias ->", r.status_code, "alias:", MI_ALIAS)
+    except Exception as e:
+        print("Error registrando alias:", e)
 
 # ---------------- ESTADO ----------------
 
@@ -76,116 +99,129 @@ def obtener_estado():
     }
 
     estado_global["Recursos"] = recursos
+
+    print("Estado actual")
+    print("Recursos:", recursos)
+    print("Objetivo:", objetivo)
+    print("Otros:", otros)
+    print("Correos:", len(buzon))
+    print("Ofertas pendientes:", len(estado_global["OfertasPendientes"]))
+
     return estado
 
-# ---------------- PROMPT DINÁMICO ----------------
+# ---------------- PROMPT ----------------
 
 def construir_system_prompt(estado, correo_actual=None):
     base = f"""
 Eres un agente comerciante autónomo en un juego de recursos.
 Tu alias es {MI_ALIAS}.
 
---- ESTADO ACTUAL ---
-Mis Recursos: {json.dumps(estado['Recursos'])}
-Mi Objetivo: {json.dumps(estado['Objetivo'])}
-Materiales conocidos actualmente: {estado['Materiales']}
+ESTADO ACTUAL
+Recursos: {json.dumps(estado['Recursos'])}
+Objetivo: {json.dumps(estado['Objetivo'])}
+Materiales conocidos: {estado['Materiales']}
 Otros jugadores: {estado['Otros']}
+
+REGLAS
+- Solo envía paquetes cuando haya un acuerdo confirmado.
+- Nunca envíes recursos que no tienes.
+- Solo negocia intercambios mediante propuestas.
+- Recursos deben ser JSON válido.
 """
 
     if correo_actual:
         base += f"""
---- PROCESANDO ESTE CORREO ---
+CORREO ACTUAL
 {json.dumps(correo_actual, indent=2)}
 
-REGLAS PARA ESTE CORREO:
-- Decide SOLO sobre este correo.
-- Si te ofrecen recursos que te ayudan a cumplir el Objetivo:
-    - Acepta el trato:
-        - enviar_paquete
-        - enviar_carta confirmando el acuerdo
-        - eliminar_correo
-- Si no te interesa:
-    - Rechaza educadamente o pide más info
-    - eliminar_correo
-
-REGLA SOBRE MATERIALES DESCONOCIDOS:
-- Si te ofrecen un material que no aparece en tu Objetivo:
-    - No lo aceptes directamente
-    - Pide más información
+Decide únicamente sobre este correo.
 """
     else:
         base += """
---- NO HAY CORREOS ---
-REGLAS:
-- Detecta qué recursos te faltan para cumplir el Objetivo.
-- Detecta qué recursos te sobran.
-- Propón un intercambio simple 1 a 1 con otro jugador usando enviar_carta.
-- No envíes paquetes sin un acuerdo previo por carta.
+No hay correos. Propón un intercambio simple que te acerque a tu objetivo.
 """
 
     return base
 
 # ---------------- VALIDACIÓN ----------------
 
-def filtrar_recursos_validos(recursos_a_enviar):
+def filtrar_recursos_validos(recursos_llm):
     mis_recursos = estado_global["Recursos"]
 
+    if not isinstance(recursos_llm, dict):
+        print("Formato de recursos inválido:", recursos_llm)
+        return {}
+
     filtrados = {}
-    for mat, cant in recursos_a_enviar.items():
-        if cant > 0 and mis_recursos.get(mat, 0) >= cant:
-            filtrados[mat] = cant
-        else:
-            print(f" Recurso inválido o insuficiente: {mat} -> {cant}")
+    for mat, cant in recursos_llm.items():
+        if not isinstance(cant, int) or cant <= 0:
+            continue
+        if mat not in mis_recursos or mis_recursos[mat] < cant:
+            continue
+        filtrados[mat] = cant
 
     return filtrados
 
 # ---------------- TOOLS ----------------
 
+def guardar_oferta(destinatario, recursos_ofrecidos, recursos_deseados):
+    oferta = {
+        "destinatario": destinatario,
+        "recursos_ofrecidos": json.dumps(recursos_ofrecidos),
+        "recursos_deseados": json.dumps(recursos_deseados),
+        "estado": "pendiente"
+    }
+    estado_global["OfertasPendientes"].append(oferta)
+    print("Oferta guardada:", oferta)
+
+    # Enviar carta automáticamente
+    cuerpo = f"Propongo intercambio:\nOfrezco: {recursos_ofrecidos}\nDeseo: {recursos_deseados}"
+    api_post_carta(destinatario, "Propuesta de intercambio", cuerpo)
+
 def ejecutar_tool_call(tool_call):
     name = tool_call.function.name
-    args = json.loads(tool_call.function.arguments)
 
-    print(f" Ejecutando tool: {name}")
+    try:
+        args = json.loads(tool_call.function.arguments)
+    except Exception as e:
+        print("Error parseando argumentos:", tool_call.function.arguments, e)
+        return
 
-    if name == "enviar_carta":
-        api_post_carta(args["destinatario"], args["asunto"], args["cuerpo"])
+    if name == "proponer_intercambio":
+        recursos_ofrecidos = args.get("recursos_ofrecidos", {})
+        recursos_deseados = args.get("recursos_deseados", {})
+        destinatario = args.get("destinatario")
+        if destinatario:
+            guardar_oferta(destinatario, recursos_ofrecidos, recursos_deseados)
 
     elif name == "enviar_paquete":
-        recursos_raw = args["recursos"]
-        if isinstance(recursos_raw, str):
-            try:
-                recursos_raw = json.loads(recursos_raw)
-            except Exception as e:
-                print("No se pudo parsear recursos:", recursos_raw, e)
-                return
+        recursos = filtrar_recursos_validos(args.get("recursos", {}))
+        if recursos:
+            api_post_paquete(args["destinatario"], recursos)
+        else:
+            print("Paquete bloqueado por validación")
 
-        recursos_filtrados = filtrar_recursos_validos(recursos_raw)
-        if recursos_filtrados:
-            api_post_paquete(args["destinatario"], recursos_filtrados)
-        else:
-            print(" No se envió paquete: recursos inválidos.")
-        if recursos_filtrados:
-            api_post_paquete(args["destinatario"], recursos_filtrados)
-        else:
-            print("No se envió paquete: recursos inválidos.")
+    elif name == "enviar_carta":
+        api_post_carta(args["destinatario"], args["asunto"], args["cuerpo"])
 
     elif name == "eliminar_correo":
         api_delete_mail(args["uid"])
 
-# ---------------- CICLO ----------------
+# ---------------- CICLO PRINCIPAL ----------------
 
 def ciclo_principal():
     registrar_identidad()
-    print("Agente Comercial iniciado")
+    print("Agente iniciado")
 
     while True:
+        print("\n--- NUEVO CICLO ---")
         estado = obtener_estado()
         buzon = estado["Buzon"] or {}
 
-        # Procesar correos uno a uno
         for uid, correo in buzon.items():
-            system_prompt = construir_system_prompt(estado, correo)
+            print("Procesando correo:", uid, "de:", correo.get("remi"))
 
+            system_prompt = construir_system_prompt(estado, correo)
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "Procesa este correo."}
@@ -198,45 +234,16 @@ def ciclo_principal():
                     tools=tools_schema,
                     tool_choice="auto"
                 )
-
                 msg = response.choices[0].message
 
                 if msg.tool_calls:
                     for tool in msg.tool_calls:
                         ejecutar_tool_call(tool)
                 else:
-                    print("No se realizó acción sobre este correo.")
+                    print("No se tomó acción para este correo")
 
             except Exception as e:
                 print("Error LLM (correo):", e)
-
-        # Si no hay correos, proponer trade
-        if not buzon:
-            system_prompt = construir_system_prompt(estado)
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Propón un intercambio beneficioso."}
-            ]
-
-            try:
-                response = CLIENT_LLM.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    tools=tools_schema,
-                    tool_choice="auto"
-                )
-
-                msg = response.choices[0].message
-
-                if msg.tool_calls:
-                    for tool in msg.tool_calls:
-                        ejecutar_tool_call(tool)
-                else:
-                    print("No se propuso ningún intercambio.")
-
-            except Exception as e:
-                print("Error LLM (propuesta):", e)
 
         time.sleep(10)
 
@@ -246,8 +253,36 @@ tools_schema = [
     {
         "type": "function",
         "function": {
+            "name": "proponer_intercambio",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "destinatario": {"type": "string"},
+                    "recursos_ofrecidos": {"type": "object"},
+                    "recursos_deseados": {"type": "object"}
+                },
+                "required": ["destinatario", "recursos_ofrecidos", "recursos_deseados"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enviar_paquete",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "destinatario": {"type": "string"},
+                    "recursos": {"type": "object", "additionalProperties": {"type": "integer"}}
+                },
+                "required": ["destinatario", "recursos"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "enviar_carta",
-            "description": "Envía una carta a otro jugador",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -262,28 +297,7 @@ tools_schema = [
     {
         "type": "function",
         "function": {
-            "name": "enviar_paquete",
-            "description": "Envía recursos dinámicos a otro jugador",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "destinatario": {"type": "string"},
-                    "recursos": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "integer"
-                        }
-                    }
-                },
-                "required": ["destinatario", "recursos"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "eliminar_correo",
-            "description": "Elimina un correo del buzón",
             "parameters": {
                 "type": "object",
                 "properties": {
