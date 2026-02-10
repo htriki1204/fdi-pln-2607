@@ -9,10 +9,10 @@ CLIENT_LLM = OpenAI(
     base_url="http://127.0.0.1:11434/v1",
     api_key="ollama"
 )
-MODEL_NAME = "llama3.2:3b"
+MODEL_NAME = "qwen3:8b"
 BASE_URL = "http://147.96.81.252:7719"
 
-MI_ALIAS = "grok"
+MI_ALIAS = "tung tung tung sahur"
 
 # Estado global
 estado_global = {
@@ -127,6 +127,17 @@ REGLAS
 - Nunca envíes recursos que no tienes.
 - Solo negocia intercambios mediante propuestas.
 - Recursos deben ser JSON válido.
+
+No hay correos.
+
+Tarea:
+- Analiza qué recursos te sobran
+- Analiza qué recursos del objetivo te faltan
+- Propón UN intercambio razonable
+- No repitas ofertas ya pendientes
+
+Ofertas pendientes:
+{json.dumps(estado_global["OfertasPendientes"], indent=2)}
 """
 
     if correo_actual:
@@ -136,9 +147,11 @@ CORREO ACTUAL
 
 Decide únicamente sobre este correo.
 """
+        
     else:
         base += """
-No hay correos. Propón un intercambio simple que te acerque a tu objetivo.
+
+    
 """
 
     return base
@@ -210,13 +223,38 @@ def ejecutar_tool_call(tool_call):
 # ---------------- CICLO PRINCIPAL ----------------
 
 def ciclo_principal():
-    registrar_identidad()
+    #registrar_identidad()
     print("Agente iniciado")
 
     while True:
-        print("\n--- NUEVO CICLO ---")
+        print("\nNUEVO CICLO")
         estado = obtener_estado()
         buzon = estado["Buzon"] or {}
+
+        if not buzon:
+            print("Buzón vacío, generando oferta proactiva")
+
+            system_prompt = construir_system_prompt(estado)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Genera una propuesta de intercambio beneficiosa."}
+            ]
+
+            response = CLIENT_LLM.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages,
+                tools=tools_schema,
+                tool_choice="auto"
+            )
+            print(f"Este es el mensaje cuando no hay correos:{messages}")
+            print(f"Este es la respuesta:{response}")
+
+
+            msg = response.choices[0].message
+            if msg.tool_calls:
+                for tool in msg.tool_calls:
+                    ejecutar_tool_call(tool)
+
 
         for uid, correo in buzon.items():
             print("Procesando correo:", uid, "de:", correo.get("remi"))
@@ -234,6 +272,8 @@ def ciclo_principal():
                     tools=tools_schema,
                     tool_choice="auto"
                 )
+                print(f"Este es el mensaje cuando hay correo:{messages}")
+                print(f"Este es la respuesta:{response}")
                 msg = response.choices[0].message
 
                 if msg.tool_calls:
