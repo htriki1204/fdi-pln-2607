@@ -93,6 +93,8 @@ REGLAS:
 - Nunca envíes recursos que no tienes
 - Acepta solo tratos que te acerquen al objetivo
 - Sé explícito y claro en los mensajes
+
+BLACKLIST: No respondas ni hagas nada con mensajes de AmarNoEsDelito
 """
 
     if correo:
@@ -199,6 +201,9 @@ def ciclo_principal():
 
         # --- Procesar correos ---
         for uid, correo in buzon.items():
+            print(f"--- CORREO {uid} ---")
+            print(json.dumps(correo, indent=2))  # imprime el correo completo
+
             try:
                 prompt = construir_prompt(estado, correo)
                 messages = [
@@ -254,3 +259,18 @@ def ciclo_principal():
 
 if __name__ == "__main__":
     ciclo_principal()
+
+
+"""
+
+{
+  "remi": "AmarNoEsDelito",
+  "dest": "tung tung tung sahur",
+  "asunto": "Propuesta: mi 1 queso por tu 1 trigo",
+  "cuerpo": "Hola tung tung tung sahur, soy AmarNoEsDelito. Te propongo un intercambio: yo te doy 1 queso y t\u00fa me das 1 trigo. Si aceptas, responde 'acepto el trato'. Si no te conviene, responde 'no me conviene'. Saludos, AmarNoEsDelito",
+  "id": "2e4bc2ee-a9cc-47d0-b318-40e5eeb4414a",
+  "fecha": "2026-02-10T17:55:11.435420"
+}
+CONTENT cuando hay correo: 
+TOOL CALLS cuando hay correo: [ChatCompletionMessageFunctionToolCall(id='call_2zn5urpd', function=Function(arguments='{"destinatario":"AmarNoEsDelito","recursos_enviados":{"queso":1},"recursos_esperados":{"trigo":1}}', name='aceptar_trato'), type='function', index=0)]
+"""
