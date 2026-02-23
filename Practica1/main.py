@@ -1,416 +1,44 @@
-import json
-import os
+"""Entrypoint del agente: bucle principal de ejecucion."""
+
+from __future__ import annotations
+
 import time
-import uuid
 
-import requests
-from openai import OpenAI
-
-# CONFIGURACIÓN
-CLIENT_LLM = OpenAI(
-    base_url="http://127.0.0.1:11434/v1",
-    api_key="ollama"
-)
-MODEL_NAME = os.getenv("FDI_PLN__MODEL", "llama3.2:latest")
-BUTLER_ADDRESS = os.getenv("FDI_PLN__BUTLER_ADDRESS", "127.0.0.1:7719").strip().rstrip("/")
-BASE_URL = f"http://{BUTLER_ADDRESS}"
-REQUEST_TIMEOUT = 10
-
-MI_ALIAS = os.getenv("FDI_PLN__ALIAS", "hamza_agent")
-
-# Estado global
-estado_global = {
-    "Recursos": {},
-    "OfertasPendientes": []
-}
-
-# ---------------- API ----------------
-
-def parametros_agente():
-    # En modo monopuesto butler identifica al agente por query param.
-    return {"agente": MI_ALIAS}
+from api_butler import api_get_gente, api_get_info, registrar_identidad
+from negociacion import construir_estado, procesar_correo, procesar_turno_sin_correos
+from settings import CYCLE_SECONDS, WAIT_WITHOUT_PEERS_SECONDS
 
 
-def api_get_info():
-    try:
-        r = requests.get(
-            f"{BASE_URL}/info",
-            params=parametros_agente(),
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        print("GET /info ->", r.status_code)
-        return r.json()
-    except Exception as e:
-        print("Error GET /info:", e)
-        return {}
-
-def api_get_gente():
-    try:
-        r = requests.get(
-            f"{BASE_URL}/gente",
-            params=parametros_agente(),
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        print("GET /gente ->", r.status_code)
-        return r.json()
-    except Exception as e:
-        print("Error GET /gente:", e)
-        return []
-
-def api_post_carta(destinatario, asunto, cuerpo):
-    carta_id = str(uuid.uuid4())[:8]
-    payload = {
-        "remi": MI_ALIAS,
-        "dest": destinatario,
-        "asunto": asunto,
-        "cuerpo": cuerpo,
-        "id": carta_id,
-        "fecha": time.strftime("%Y-%m-%d %H:%M")
-    }
-    try:
-        r = requests.post(
-            f"{BASE_URL}/carta",
-            params=parametros_agente(),
-            json=payload,
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        print("POST /carta ->", r.status_code, "dest:", destinatario, "asunto:", asunto)
-    except Exception as e:
-        print("Error enviando carta:", e)
-
-def api_post_paquete(destinatario, recursos):
-    try:
-        r = requests.post(
-            f"{BASE_URL}/paquete/{destinatario}",
-            params=parametros_agente(),
-            json=recursos,
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        print("POST /paquete ->", r.status_code, "dest:", destinatario, "recursos:", recursos)
-    except Exception as e:
-        print("Error enviando paquete:", e)
-
-def api_delete_mail(uid):
-    try:
-        r = requests.delete(
-            f"{BASE_URL}/mail/{uid}",
-            params=parametros_agente(),
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        print("DELETE /mail ->", r.status_code, "uid:", uid)
-    except Exception as e:
-        print("Error borrando mail:", e)
-
-def registrar_identidad():
-    try:
-        r = requests.post(
-            f"{BASE_URL}/alias/{MI_ALIAS}",
-            params=parametros_agente(),
-            timeout=REQUEST_TIMEOUT,
-        )
-        r.raise_for_status()
-        print("POST /alias ->", r.status_code, "alias:", MI_ALIAS)
-    except Exception as e:
-        print("Error registrando alias:", e)
-
-# ---------------- ESTADO ----------------
-
-def obtener_aliases_otros(gente):
-    otros = []
-    for persona in gente:
-        alias = None
-        if isinstance(persona, dict):
-            alias = persona.get("alias")
-        elif isinstance(persona, str):
-            alias = persona
-
-        if alias and alias != MI_ALIAS:
-            otros.append(alias)
-
-    return otros
-
-
-def obtener_estado():
-    info = api_get_info()
-    gente = api_get_gente()
-    otros = obtener_aliases_otros(gente)
-
-    recursos = info.get("Recursos", {})
-    objetivo = info.get("Objetivo", {})
-    buzon = info.get("Buzon") or {}
-
-    materiales_actuales = list(set(recursos.keys()) | set(objetivo.keys()))
-
-    estado = {
-        "Recursos": recursos,
-        "Objetivo": objetivo,
-        "Buzon": buzon,
-        "Otros": otros,
-        "Materiales": materiales_actuales
-    }
-
-    estado_global["Recursos"] = recursos
-
-    print("Estado actual")
-    print("Recursos:", recursos)
-    print("Objetivo:", objetivo)
-    print("Otros:", otros)
-    print("Correos:", len(buzon))
-    print("Ofertas pendientes:", len(estado_global["OfertasPendientes"]))
-
-    return estado
-
-# ---------------- PROMPT ----------------
-
-def construir_system_prompt(estado, correo_actual=None):
-    base = f"""
-Eres un agente comerciante autónomo en un juego de recursos.
-Tu alias es {MI_ALIAS}.
-
-ESTADO ACTUAL
-Recursos: {json.dumps(estado['Recursos'])}
-Objetivo: {json.dumps(estado['Objetivo'])}
-Materiales conocidos: {estado['Materiales']}
-Otros jugadores: {estado['Otros']}
-
-REGLAS
-- Solo envía paquetes cuando haya un acuerdo confirmado.
-- Nunca envíes recursos que no tienes.
-- Solo negocia intercambios mediante propuestas.
-- Recursos deben ser JSON válido.
-
-No hay correos.
-
-Tarea:
-- Analiza qué recursos te sobran
-- Analiza qué recursos del objetivo te faltan
-- Propón UN intercambio razonable
-- No repitas ofertas ya pendientes
-
-Ofertas pendientes:
-{json.dumps(estado_global["OfertasPendientes"], indent=2)}
-"""
-
-    if correo_actual:
-        base += f"""
-CORREO ACTUAL
-{json.dumps(correo_actual, indent=2)}
-
-Decide únicamente sobre este correo.
-"""
-        
-    else:
-        base += """
-
-    
-"""
-
-    return base
-
-# ---------------- VALIDACIÓN ----------------
-
-def filtrar_recursos_validos(recursos_llm):
-    mis_recursos = estado_global["Recursos"]
-
-    if not isinstance(recursos_llm, dict):
-        print("Formato de recursos inválido:", recursos_llm)
-        return {}
-
-    filtrados = {}
-    for mat, cant in recursos_llm.items():
-        if not isinstance(cant, int) or cant <= 0:
-            continue
-        if mat not in mis_recursos or mis_recursos[mat] < cant:
-            continue
-        filtrados[mat] = cant
-
-    return filtrados
-
-# ---------------- TOOLS ----------------
-
-def guardar_oferta(destinatario, recursos_ofrecidos, recursos_deseados):
-    oferta = {
-        "destinatario": destinatario,
-        "recursos_ofrecidos": json.dumps(recursos_ofrecidos),
-        "recursos_deseados": json.dumps(recursos_deseados),
-        "estado": "pendiente"
-    }
-    estado_global["OfertasPendientes"].append(oferta)
-    print("Oferta guardada:", oferta)
-
-    # Enviar carta automáticamente
-    cuerpo = f"Propongo intercambio:\nOfrezco: {recursos_ofrecidos}\nDeseo: {recursos_deseados}"
-    api_post_carta(destinatario, "Propuesta de intercambio", cuerpo)
-
-def ejecutar_tool_call(tool_call):
-    name = tool_call.function.name
-
-    try:
-        args = json.loads(tool_call.function.arguments)
-    except Exception as e:
-        print("Error parseando argumentos:", tool_call.function.arguments, e)
-        return
-
-    if name == "proponer_intercambio":
-        recursos_ofrecidos = args.get("recursos_ofrecidos", {})
-        recursos_deseados = args.get("recursos_deseados", {})
-        destinatario = args.get("destinatario")
-        if destinatario:
-            guardar_oferta(destinatario, recursos_ofrecidos, recursos_deseados)
-
-    elif name == "enviar_paquete":
-        recursos = filtrar_recursos_validos(args.get("recursos", {}))
-        if recursos:
-            api_post_paquete(args["destinatario"], recursos)
-        else:
-            print("Paquete bloqueado por validación")
-
-    elif name == "enviar_carta":
-        api_post_carta(args["destinatario"], args["asunto"], args["cuerpo"])
-
-    elif name == "eliminar_correo":
-        api_delete_mail(args["uid"])
-
-# ---------------- CICLO PRINCIPAL ----------------
-
-def ciclo_principal():
+def ciclo_principal() -> None:
+    """Ejecuta el bucle principal del agente."""
     registrar_identidad()
     print("Agente iniciado")
 
     while True:
         print("\nNUEVO CICLO")
-        estado = obtener_estado()
-        buzon = estado["Buzon"] if isinstance(estado["Buzon"], dict) else {}
 
-        if not estado["Otros"]:
-            print("No hay otros agentes en la simulación todavía. Esperando...")
-            time.sleep(10)
+        info = api_get_info()
+        gente = api_get_gente()
+        estado = construir_estado(info, gente)
+
+        if not estado["otros"]:
+            print("No hay otros agentes en la simulacion todavia. Esperando...")
+            time.sleep(WAIT_WITHOUT_PEERS_SECONDS)
             continue
 
-        if not buzon:
-            print("Buzón vacío, generando oferta proactiva")
+        if not estado["buzon"]:
+            procesar_turno_sin_correos(estado)
 
-            system_prompt = construir_system_prompt(estado)
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Genera una propuesta de intercambio beneficiosa."}
-            ]
+        for uid, correo in estado["buzon"].items():
+            procesar_correo(estado, uid, correo)
 
-            response = CLIENT_LLM.chat.completions.create(
-                model=MODEL_NAME,
-                messages=messages,
-                tools=tools_schema,
-                tool_choice="auto"
-            )
-            print(f"Este es el mensaje cuando no hay correos:{messages}")
-            print(f"Este es la respuesta:{response}")
+        time.sleep(CYCLE_SECONDS)
 
 
-            msg = response.choices[0].message
-            if msg.tool_calls:
-                for tool in msg.tool_calls:
-                    ejecutar_tool_call(tool)
+def main() -> None:
+    """Entrypoint CLI."""
+    ciclo_principal()
 
-
-        for uid, correo in buzon.items():
-            print("Procesando correo:", uid, "de:", correo.get("remi"))
-
-            system_prompt = construir_system_prompt(estado, correo)
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Procesa este correo."}
-            ]
-
-            try:
-                response = CLIENT_LLM.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    tools=tools_schema,
-                    tool_choice="auto"
-                )
-                print(f"Este es el mensaje cuando hay correo:{messages}")
-                print(f"Este es la respuesta:{response}")
-                msg = response.choices[0].message
-
-                if msg.tool_calls:
-                    for tool in msg.tool_calls:
-                        ejecutar_tool_call(tool)
-                else:
-                    print("No se tomó acción para este correo")
-
-            except Exception as e:
-                print("Error LLM (correo):", e)
-
-        time.sleep(10)
-
-# ---------------- TOOLS SCHEMA ----------------
-
-tools_schema = [
-    {
-        "type": "function",
-        "function": {
-            "name": "proponer_intercambio",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "destinatario": {"type": "string"},
-                    "recursos_ofrecidos": {"type": "object"},
-                    "recursos_deseados": {"type": "object"}
-                },
-                "required": ["destinatario", "recursos_ofrecidos", "recursos_deseados"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "enviar_paquete",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "destinatario": {"type": "string"},
-                    "recursos": {"type": "object", "additionalProperties": {"type": "integer"}}
-                },
-                "required": ["destinatario", "recursos"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "enviar_carta",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "destinatario": {"type": "string"},
-                    "asunto": {"type": "string"},
-                    "cuerpo": {"type": "string"}
-                },
-                "required": ["destinatario", "asunto", "cuerpo"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "eliminar_correo",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "uid": {"type": "string"}
-                },
-                "required": ["uid"]
-            }
-        }
-    }
-]
-
-# ---------------- MAIN ----------------
 
 if __name__ == "__main__":
-    ciclo_principal()
+    main()

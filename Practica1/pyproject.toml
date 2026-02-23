@@ -1,10 +1,19 @@
 [project]
 name = "practica1"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agente para la Practica 1 de PLN"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "openai>=2.16.0",
+    "ollama>=0.6.1",
     "requests>=2.32.5",
 ]
+
+[project.scripts]
+fdi-pln-2607-p1 = "main:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+py-modules = ["main", "api_butler", "negociacion", "settings"]
