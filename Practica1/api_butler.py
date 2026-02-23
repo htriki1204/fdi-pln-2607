@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any
@@ -9,6 +10,8 @@ from typing import Any
 import requests
 
 from settings import BASE_URL, MI_ALIAS, REQUEST_TIMEOUT
+
+logger = logging.getLogger("agente.api")
 
 
 def parametros_agente() -> dict[str, str]:
@@ -32,15 +35,34 @@ def _request_json(
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
-        print(f"{method.upper()} /{endpoint} -> {response.status_code}")
+        method_upper = method.upper()
+        if method_upper == "GET":
+            logger.debug("%s /%s -> %s", method_upper, endpoint, response.status_code)
+        else:
+            logger.info("%s /%s -> %s", method_upper, endpoint, response.status_code)
         return response.json() if response.content else {}
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if (
+            method.upper() == "POST"
+            and endpoint.startswith("alias/")
+            and status_code == 403
+        ):
+            logger.info(
+                "Alias ya registrado en Butler (%s). Se reutiliza sesion.",
+                MI_ALIAS,
+            )
+            return None
+        logger.error("Error %s /%s: %s", method.upper(), endpoint, exc)
+        return {} if method.upper() == "GET" else None
     except requests.RequestException as exc:
-        print(f"Error {method.upper()} /{endpoint}: {exc}")
+        logger.error("Error %s /%s: %s", method.upper(), endpoint, exc)
         return {} if method.upper() == "GET" else None
 
 
 def registrar_identidad() -> None:
     """Registra el alias del agente en Butler."""
+    logger.info("Registrando alias en Butler: %s", MI_ALIAS)
     _request_json("POST", f"alias/{MI_ALIAS}")
 
 
@@ -66,16 +88,24 @@ def api_post_carta(destinatario: str, asunto: str, cuerpo: str) -> None:
         "id": str(uuid.uuid4())[:8],
         "fecha": time.strftime("%Y-%m-%d %H:%M"),
     }
+    logger.info(
+        "Carta enviada -> dest=%s asunto=%s cuerpo=%s",
+        destinatario,
+        asunto,
+        cuerpo,
+    )
     _request_json("POST", "carta", payload=payload)
 
 
 def api_post_paquete(destinatario: str, recursos: dict[str, int]) -> None:
     """Envia un paquete de recursos a otro agente."""
+    logger.info("Paquete enviado -> dest=%s recursos=%s", destinatario, recursos)
     _request_json("POST", f"paquete/{destinatario}", payload=recursos)
 
 
 def api_delete_mail(uid: str) -> None:
     """Elimina un correo del buzon."""
+    logger.debug("Borrando correo uid=%s", uid)
     _request_json("DELETE", f"mail/{uid}")
 
 
