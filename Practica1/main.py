@@ -1,7 +1,9 @@
-import requests
 import json
+import os
 import time
 import uuid
+
+import requests
 from openai import OpenAI
 
 # CONFIGURACIÓN
@@ -9,10 +11,12 @@ CLIENT_LLM = OpenAI(
     base_url="http://127.0.0.1:11434/v1",
     api_key="ollama"
 )
-MODEL_NAME = "qwen3:8b"
-BASE_URL = "http://147.96.81.252:7719"
+MODEL_NAME = os.getenv("FDI_PLN__MODEL", "llama3.2:latest")
+BUTLER_ADDRESS = os.getenv("FDI_PLN__BUTLER_ADDRESS", "127.0.0.1:7719").strip().rstrip("/")
+BASE_URL = f"http://{BUTLER_ADDRESS}"
+REQUEST_TIMEOUT = 10
 
-MI_ALIAS = "tung tung tung sahur"
+MI_ALIAS = os.getenv("FDI_PLN__ALIAS", "hamza_agent")
 
 # Estado global
 estado_global = {
@@ -22,9 +26,19 @@ estado_global = {
 
 # ---------------- API ----------------
 
+def parametros_agente():
+    # En modo monopuesto butler identifica al agente por query param.
+    return {"agente": MI_ALIAS}
+
+
 def api_get_info():
     try:
-        r = requests.get(f"{BASE_URL}/info")
+        r = requests.get(
+            f"{BASE_URL}/info",
+            params=parametros_agente(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
         print("GET /info ->", r.status_code)
         return r.json()
     except Exception as e:
@@ -33,7 +47,12 @@ def api_get_info():
 
 def api_get_gente():
     try:
-        r = requests.get(f"{BASE_URL}/gente")
+        r = requests.get(
+            f"{BASE_URL}/gente",
+            params=parametros_agente(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
         print("GET /gente ->", r.status_code)
         return r.json()
     except Exception as e:
@@ -51,42 +70,79 @@ def api_post_carta(destinatario, asunto, cuerpo):
         "fecha": time.strftime("%Y-%m-%d %H:%M")
     }
     try:
-        r = requests.post(f"{BASE_URL}/carta", json=payload)
+        r = requests.post(
+            f"{BASE_URL}/carta",
+            params=parametros_agente(),
+            json=payload,
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
         print("POST /carta ->", r.status_code, "dest:", destinatario, "asunto:", asunto)
     except Exception as e:
         print("Error enviando carta:", e)
 
 def api_post_paquete(destinatario, recursos):
     try:
-        r = requests.post(f"{BASE_URL}/paquete/{destinatario}", json=recursos)
+        r = requests.post(
+            f"{BASE_URL}/paquete/{destinatario}",
+            params=parametros_agente(),
+            json=recursos,
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
         print("POST /paquete ->", r.status_code, "dest:", destinatario, "recursos:", recursos)
     except Exception as e:
         print("Error enviando paquete:", e)
 
 def api_delete_mail(uid):
     try:
-        r = requests.delete(f"{BASE_URL}/mail/{uid}")
+        r = requests.delete(
+            f"{BASE_URL}/mail/{uid}",
+            params=parametros_agente(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
         print("DELETE /mail ->", r.status_code, "uid:", uid)
     except Exception as e:
         print("Error borrando mail:", e)
 
 def registrar_identidad():
     try:
-        r = requests.post(f"{BASE_URL}/alias/{MI_ALIAS}")
+        r = requests.post(
+            f"{BASE_URL}/alias/{MI_ALIAS}",
+            params=parametros_agente(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
         print("POST /alias ->", r.status_code, "alias:", MI_ALIAS)
     except Exception as e:
         print("Error registrando alias:", e)
 
 # ---------------- ESTADO ----------------
 
+def obtener_aliases_otros(gente):
+    otros = []
+    for persona in gente:
+        alias = None
+        if isinstance(persona, dict):
+            alias = persona.get("alias")
+        elif isinstance(persona, str):
+            alias = persona
+
+        if alias and alias != MI_ALIAS:
+            otros.append(alias)
+
+    return otros
+
+
 def obtener_estado():
     info = api_get_info()
     gente = api_get_gente()
-    otros = [p for p in gente if p != MI_ALIAS]
+    otros = obtener_aliases_otros(gente)
 
     recursos = info.get("Recursos", {})
     objetivo = info.get("Objetivo", {})
-    buzon = info.get("Buzon", {})
+    buzon = info.get("Buzon") or {}
 
     materiales_actuales = list(set(recursos.keys()) | set(objetivo.keys()))
 
@@ -223,13 +279,18 @@ def ejecutar_tool_call(tool_call):
 # ---------------- CICLO PRINCIPAL ----------------
 
 def ciclo_principal():
-    #registrar_identidad()
+    registrar_identidad()
     print("Agente iniciado")
 
     while True:
         print("\nNUEVO CICLO")
         estado = obtener_estado()
-        buzon = estado["Buzon"] or {}
+        buzon = estado["Buzon"] if isinstance(estado["Buzon"], dict) else {}
+
+        if not estado["Otros"]:
+            print("No hay otros agentes en la simulación todavía. Esperando...")
+            time.sleep(10)
+            continue
 
         if not buzon:
             print("Buzón vacío, generando oferta proactiva")
