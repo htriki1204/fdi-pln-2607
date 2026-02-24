@@ -52,7 +52,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "enviar_paquete",
-            "description": "Envia recursos acordados a otro agente.",
+            "description": "Envia recursos acordados a otro agente. Incluye recursos_esperados para indicar que esperas recibir a cambio.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -60,6 +60,11 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
                     "recursos": {
                         "type": "object",
                         "additionalProperties": {"type": "integer"},
+                    },
+                    "recursos_esperados": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                        "description": "Recursos que esperas recibir del destinatario a cambio.",
                     },
                 },
                 "required": ["destinatario", "recursos"],
@@ -293,7 +298,7 @@ def _construir_prompt_sistema(estado: dict[str, Any]) -> str:
         f"Paso 1: Mira si lo que te PIDEN es algo que te SOBRA ({sobrantes_str}).\n"
         f"Paso 2: Mira si lo que te OFRECEN es algo que te FALTA ({faltantes_str}).\n"
         f"Si las DOS cosas se cumplen → el trato te RENTA.\n"
-        f"  → Usa enviar_paquete para enviar lo que te piden. Confia en que el otro cumplira.\n"
+        f"  → Usa enviar_paquete con recursos=lo que te piden y recursos_esperados=lo que te ofrecen. Se enviara automaticamente una carta avisando del paquete y lo que esperas recibir a cambio.\n"
         f"Si NO te renta → Usa enviar_carta para hacer una CONTRAOFERTA simple.\n"
         f"  Contraoferta: ofrece 1 de algo que te SOBRA y pide 1 de algo que te FALTA.\n"
         f"\n"
@@ -303,7 +308,7 @@ def _construir_prompt_sistema(estado: dict[str, Any]) -> str:
         f"=== FORMATO ===\n"
         f"- Usa SOLO tools, no texto libre.\n"
         f"- enviar_carta: destinatario, asunto y cuerpo son texto.\n"
-        f"- enviar_paquete: recursos es como {{\"tela\": 1}}.\n"
+        f"- enviar_paquete: recursos es como {{\"tela\": 1}}. Incluye recursos_esperados con lo que te ofrecen a cambio.\n"
         f"- Si no hay buen trato posible, usa no_accion.\n"
     )
 
@@ -434,6 +439,27 @@ def _tool_enviar_paquete(args: dict[str, Any]) -> None:
 
     api_post_paquete(destinatario, recursos)
     _descontar_stock_local(recursos)
+
+    # Notificar al destinatario que el paquete ha sido enviado
+    resumen_enviado = ", ".join(f"{v} {k}" for k, v in recursos.items())
+    recursos_esperados = _normalizar_recursos(args.get("recursos_esperados", {}))
+    if recursos_esperados:
+        resumen_esperado = ", ".join(f"{v} {k}" for k, v in recursos_esperados.items())
+        cuerpo_confirmacion = (
+            f"Te hemos enviado el paquete acordado ({resumen_enviado}). "
+            f"Quedamos a la espera de que nos envies: {resumen_esperado}."
+        )
+    else:
+        cuerpo_confirmacion = (
+            f"Te hemos enviado el paquete acordado ({resumen_enviado}). "
+            f"Quedamos a la espera de tu parte del intercambio."
+        )
+    api_post_carta(
+        destinatario,
+        "Paquete enviado - esperamos tu parte",
+        cuerpo_confirmacion,
+    )
+    logger.info("Carta de confirmacion enviada a %s tras enviar paquete", destinatario)
 
 
 def _normalizar_recursos(value: Any) -> dict[str, int]:
