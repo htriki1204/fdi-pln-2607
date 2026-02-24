@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from typing import Any
 
@@ -142,12 +143,13 @@ def procesar_turno_sin_correos(estado: dict[str, Any]) -> None:
 
     sobrantes = estado.get("sobrantes", {})
     faltantes = estado.get("faltantes", {})
-    sobra_ejemplo = next(iter(sobrantes), None)
-    falta_ejemplo = next(iter(faltantes), None)
+    sobra_ejemplo = random.choice(list(sobrantes.keys())) if sobrantes else None
+    falta_ejemplo = random.choice(list(faltantes.keys())) if faltantes else None
+    destinatario = random.choice(otros)
 
     if sobra_ejemplo and falta_ejemplo:
         user_prompt = (
-            f"No tienes correos. Envia UNA carta a un agente. "
+            f"No tienes correos. Envia UNA carta a {destinatario}. "
             f"Ofrece 1 {sobra_ejemplo} a cambio de 1 {falta_ejemplo}. "
             f"Usa enviar_carta."
         )
