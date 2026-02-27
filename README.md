@@ -1,7 +1,7 @@
 # Practica 1 PLN - Agente en butler (Grupo 7)
 
 - Hamza Triki
-- Alvaro Ferreno Iglesias
+- Alvaro Ferreño Iglesias
 
 ## Idea general
 El agente busca completar su objetivo de materiales negociando por cartas y paquetes con otros agentes en Butler.
