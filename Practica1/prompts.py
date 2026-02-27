@@ -186,8 +186,6 @@ def construir_user_prompt_correo(
     faltantes = estado.get("faltantes", {})
     objetivo_cumplido = estado.get("objetivo_cumplido", False)
 
-    sobra_txt = _fmt_recursos(sobrantes)
-
     if objetivo_cumplido:
         sobra_no_oro = {k: v for k, v in sobrantes.items() if k != "oro"}
         sobra_no_oro_txt = _fmt_recursos(sobra_no_oro)
@@ -196,19 +194,20 @@ def construir_user_prompt_correo(
 Asunto: {asunto}
 Cuerpo: {cuerpo}
 
-Ya has cumplido tu objetivo. Ahora solo quieres ORO.
-- Puedes dar: {sobra_no_oro_txt}.
-- Solo aceptas oro a cambio.
+Estado actual:
+- Objetivo principal cumplido.
+- Priorizas conseguir ORO.
+- Materiales intercambiables (excepto oro): {sobra_no_oro_txt}.
 
-Si te ofrece oro a cambio de algo que te sobra  enviar_paquete.
-Si no haz contraoferta con enviar_carta: ofrece materiales sobrantes por oro.
-Usa UNA sola tool."""
+Aplica estrictamente las reglas del system prompt para decidir la accion.
+Responde usando UNA sola tool."""
 
     no_dar = [
         m
         for m in sorted(set(recursos) | set(objetivo))
         if recursos.get(m, 0) <= objetivo.get(m, 0)
     ]
+    sobra_txt = _fmt_recursos(sobrantes)
     no_dar_txt = ", ".join(no_dar) if no_dar else "ninguno"
     falta_txt = _fmt_recursos(faltantes)
 
@@ -217,16 +216,15 @@ Usa UNA sola tool."""
 Asunto: {asunto}
 Cuerpo: {cuerpo}
 
-Recuerda:
-- Te SOBRA: {sobra_txt}. Solo puedes dar de esto.
-- Te FALTA: {falta_txt}. Esto es lo que quieres conseguir.
-- NUNCA des: {no_dar_txt}.
+Estado actual:
+- Recursos: {json.dumps(recursos, ensure_ascii=False)}
+- Objetivo: {json.dumps(objetivo, ensure_ascii=False)}
+- Te sobra: {sobra_txt}
+- Te falta: {falta_txt}
+- No deberias dar: {no_dar_txt}
 
-Si te pide algo que te SOBRA y te ofrece algo que te FALTA → envia paquete con enviar_paquete.
-Si no te renta → haz contraoferta con enviar_carta: ofrece 1 de lo que te sobra \
-por 1 de lo que te falta.
-Intercambia siempre 1x1: una unidad y un solo recurso por lado.
-Usa UNA sola tool."""
+Aplica estrictamente las reglas del system prompt para decidir la accion.
+Responde usando UNA sola tool."""
 
 
 # ---------------------------------------------------------------------------
