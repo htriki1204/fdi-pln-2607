@@ -120,6 +120,7 @@ te ofrecen. Se enviara automaticamente una carta avisando del paquete y lo que \
 esperas recibir a cambio.
 Si NO te renta → Usa enviar_carta para hacer una CONTRAOFERTA simple.
   Contraoferta: ofrece 1 de algo que te SOBRA y pide 1 de algo que te FALTA.
+Todos los intercambios son 1x1: un solo recurso y cantidad 1 por cada parte.
 
 === QUE HACER SIN CORREOS ===
 Envia UNA carta ofreciendo 1 recurso que te SOBRA a cambio de 1 que te FALTA.
@@ -130,6 +131,7 @@ Envia UNA carta ofreciendo 1 recurso que te SOBRA a cambio de 1 que te FALTA.
 - enviar_paquete: recursos es como {{"tela": 1}}. Incluye recursos_esperados con \
 lo que te ofrecen a cambio.
 - Si no hay buen trato posible, usa no_accion.
+- NUNCA propongas ni envies cantidades mayores que 1.
 """
 
 
@@ -223,6 +225,7 @@ Recuerda:
 Si te pide algo que te SOBRA y te ofrece algo que te FALTA → envia paquete con enviar_paquete.
 Si no te renta → haz contraoferta con enviar_carta: ofrece 1 de lo que te sobra \
 por 1 de lo que te falta.
+Intercambia siempre 1x1: una unidad y un solo recurso por lado.
 Usa UNA sola tool."""
 
 
@@ -259,6 +262,7 @@ Otros agentes: {otros_str}
 - Ofrece materiales sobrantes a cambio de oro.
 - Si alguien te ofrece oro a cambio de materiales que te sobran → acepta.
 - Si no te ofrecen oro → haz contraoferta pidiendo oro.
+- Intercambios siempre 1x1: un recurso y cantidad 1.
 
 === FORMATO ===
 - Usa SOLO tools, no texto libre.
