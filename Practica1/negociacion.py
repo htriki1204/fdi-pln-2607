@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import time
 from typing import Any
 
@@ -18,6 +17,12 @@ from api_butler import (
     parse_other_aliases,
     parse_resource_map,
 )
+from prompts import (
+    TOOLS_SCHEMA,
+    construir_prompt_sistema,
+    construir_user_prompt_correo,
+    construir_user_prompt_proactivo,
+)
 from settings import MI_ALIAS, MODEL_NAME, OLLAMA_HOST, PROACTIVE_COOLDOWN_SECONDS
 
 logger = logging.getLogger("agente.negociacion")
@@ -30,62 +35,6 @@ estado_global: dict[str, Any] = {
     "sobrantes": {},
     "ultima_propuesta_ts": 0.0,
 }
-
-TOOLS_SCHEMA: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "enviar_carta",
-            "description": "Envia una carta de negociacion a otro agente.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "destinatario": {"type": "string"},
-                    "asunto": {"type": "string"},
-                    "cuerpo": {"type": "string"},
-                },
-                "required": ["destinatario", "asunto", "cuerpo"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "enviar_paquete",
-            "description": "Envia recursos acordados a otro agente. Incluye recursos_esperados para indicar que esperas recibir a cambio.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "destinatario": {"type": "string"},
-                    "recursos": {
-                        "type": "object",
-                        "additionalProperties": {"type": "integer"},
-                    },
-                    "recursos_esperados": {
-                        "type": "object",
-                        "additionalProperties": {"type": "integer"},
-                        "description": "Recursos que esperas recibir del destinatario a cambio.",
-                    },
-                },
-                "required": ["destinatario", "recursos"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "no_accion",
-            "description": "No hacer ninguna accion este turno.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "razon": {"type": "string"},
-                },
-                "required": ["razon"],
-            },
-        },
-    },
-]
 
 
 def construir_estado(info: dict[str, Any], gente: list[Any]) -> dict[str, Any]:
@@ -138,25 +87,8 @@ def procesar_turno_sin_correos(estado: dict[str, Any]) -> None:
         logger.info("Sin otros agentes para propuesta proactiva")
         return
 
-    system_prompt = _construir_prompt_sistema(estado)
-
-    sobrantes = estado.get("sobrantes", {})
-    faltantes = estado.get("faltantes", {})
-    sobra_ejemplo = random.choice(list(sobrantes.keys())) if sobrantes else None
-    falta_ejemplo = random.choice(list(faltantes.keys())) if faltantes else None
-    destinatario = random.choice(otros)
-
-    if sobra_ejemplo and falta_ejemplo:
-        user_prompt = (
-            f"No tienes correos. Envia UNA carta a {destinatario}. "
-            f"Ofrece 1 {sobra_ejemplo} a cambio de 1 {falta_ejemplo}. "
-            f"Usa enviar_carta."
-        )
-    else:
-        user_prompt = (
-            "No tienes correos y no tienes recursos sobrantes para ofrecer. "
-            "Usa no_accion."
-        )
+    system_prompt = construir_prompt_sistema(estado)
+    user_prompt = construir_user_prompt_proactivo(estado)
 
     tool_calls = _consultar_llm(system_prompt, user_prompt)
     _ejecutar_tool_calls(tool_calls)
@@ -184,43 +116,9 @@ def procesar_correo(estado: dict[str, Any], uid: str, correo: dict[str, Any]) ->
 
     try:
         estado_actual = _estado_dinamico(estado)
-        system_prompt = _construir_prompt_sistema(estado_actual)
-
-        # Construir listas legibles para reforzar en user prompt
-        recursos_act = estado_actual.get("recursos", {})
-        objetivo_act = estado_actual.get("objetivo", {})
-        sobrantes_act = estado_actual.get("sobrantes", {})
-        faltantes_act = estado_actual.get("faltantes", {})
-        no_dar = [
-            m
-            for m in sorted(set(recursos_act) | set(objetivo_act))
-            if recursos_act.get(m, 0) <= objetivo_act.get(m, 0)
-        ]
-        no_dar_txt = ", ".join(no_dar) if no_dar else "ninguno"
-        sobra_txt = (
-            ", ".join(f"{v} {k}" for k, v in sobrantes_act.items())
-            if sobrantes_act
-            else "nada"
-        )
-        falta_txt = (
-            ", ".join(f"{v} {k}" for k, v in faltantes_act.items())
-            if faltantes_act
-            else "nada"
-        )
-
-        user_prompt = (
-            f"{remitente} te ha enviado un correo.\n"
-            f"Asunto: {asunto}\n"
-            f"Cuerpo: {cuerpo}\n"
-            f"\n"
-            f"Recuerda:\n"
-            f"- Te SOBRA: {sobra_txt}. Solo puedes dar de esto.\n"
-            f"- Te FALTA: {falta_txt}. Esto es lo que quieres conseguir.\n"
-            f"- NUNCA des: {no_dar_txt}.\n"
-            f"\n"
-            f"Si te pide algo que te SOBRA y te ofrece algo que te FALTA → envia paquete con enviar_paquete.\n"
-            f"Si no te renta → haz contraoferta con enviar_carta: ofrece 1 de lo que te sobra por 1 de lo que te falta.\n"
-            f"Usa UNA sola tool."
+        system_prompt = construir_prompt_sistema(estado_actual)
+        user_prompt = construir_user_prompt_correo(
+            remitente, asunto, cuerpo, estado_actual
         )
 
         tool_calls = _consultar_llm(system_prompt, user_prompt)
@@ -256,63 +154,6 @@ def _calcular_sobrantes(
         if extra > 0:
             sobrantes[material] = extra
     return sobrantes
-
-
-def _construir_prompt_sistema(estado: dict[str, Any]) -> str:
-    """Construye prompt de sistema claro y simple para LLMs pequenos."""
-    recursos = estado.get("recursos", {})
-    objetivo = estado.get("objetivo", {})
-    faltantes = estado.get("faltantes", {})
-    sobrantes = estado.get("sobrantes", {})
-    otros = estado.get("otros", [])
-
-    # --- Lista dinamica de recursos que NUNCA se deben dar ---
-    nunca_dar: list[str] = []
-    for material in sorted(set(recursos) | set(objetivo)):
-        actual = recursos.get(material, 0)
-        necesito = objetivo.get(material, 0)
-        if actual <= necesito:
-            nunca_dar.append(material)
-
-    nunca_dar_str = ", ".join(nunca_dar) if nunca_dar else "ninguno"
-    sobrantes_str = (
-        ", ".join(f"{v} {k}" for k, v in sobrantes.items()) if sobrantes else "nada"
-    )
-    faltantes_str = (
-        ", ".join(f"{v} {k}" for k, v in faltantes.items()) if faltantes else "nada"
-    )
-    otros_str = ", ".join(otros) if otros else "nadie"
-
-    return (
-        f"Tu nombre es {MI_ALIAS}. Intercambias recursos con otros agentes.\n"
-        f"\n"
-        f"TIENES: {json.dumps(recursos, ensure_ascii=False)}\n"
-        f"NECESITAS LLEGAR A: {json.dumps(objetivo, ensure_ascii=False)}\n"
-        f"TE FALTA: {faltantes_str}\n"
-        f"TE SOBRA (puedes dar): {sobrantes_str}\n"
-        f"Otros agentes: {otros_str}\n"
-        f"\n"
-        f"=== PROHIBIDO ===\n"
-        f"NUNCA des estos recursos: {nunca_dar_str}. Los necesitas.\n"
-        f"\n"
-        f"=== QUE HACER CUANDO RECIBES UN CORREO ===\n"
-        f"Alguien te pide un recurso y te ofrece otro a cambio.\n"
-        f"Paso 1: Mira si lo que te PIDEN es algo que te SOBRA ({sobrantes_str}).\n"
-        f"Paso 2: Mira si lo que te OFRECEN es algo que te FALTA ({faltantes_str}).\n"
-        f"Si las DOS cosas se cumplen → el trato te RENTA.\n"
-        f"  → Usa enviar_paquete con recursos=lo que te piden y recursos_esperados=lo que te ofrecen. Se enviara automaticamente una carta avisando del paquete y lo que esperas recibir a cambio.\n"
-        f"Si NO te renta → Usa enviar_carta para hacer una CONTRAOFERTA simple.\n"
-        f"  Contraoferta: ofrece 1 de algo que te SOBRA y pide 1 de algo que te FALTA.\n"
-        f"\n"
-        f"=== QUE HACER SIN CORREOS ===\n"
-        f"Envia UNA carta ofreciendo 1 recurso que te SOBRA a cambio de 1 que te FALTA.\n"
-        f"\n"
-        f"=== FORMATO ===\n"
-        f"- Usa SOLO tools, no texto libre.\n"
-        f"- enviar_carta: destinatario, asunto y cuerpo son texto.\n"
-        f'- enviar_paquete: recursos es como {{"tela": 1}}. Incluye recursos_esperados con lo que te ofrecen a cambio.\n'
-        f"- Si no hay buen trato posible, usa no_accion.\n"
-    )
 
 
 def _consultar_llm(system_prompt: str, user_prompt: str) -> list[Any]:
