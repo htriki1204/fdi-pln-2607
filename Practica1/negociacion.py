@@ -310,7 +310,7 @@ def _construir_prompt_sistema(estado: dict[str, Any]) -> str:
         f"=== FORMATO ===\n"
         f"- Usa SOLO tools, no texto libre.\n"
         f"- enviar_carta: destinatario, asunto y cuerpo son texto.\n"
-        f"- enviar_paquete: recursos es como {{\"tela\": 1}}. Incluye recursos_esperados con lo que te ofrecen a cambio.\n"
+        f'- enviar_paquete: recursos es como {{"tela": 1}}. Incluye recursos_esperados con lo que te ofrecen a cambio.\n'
         f"- Si no hay buen trato posible, usa no_accion.\n"
     )
 

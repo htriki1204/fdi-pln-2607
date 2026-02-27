@@ -1,6 +1,6 @@
 [project]
-name = "practica1"
-version = "0.1.0"
+name = "fdi_pln_2607_p1"
+version = "1.0"
 description = "Agente para la Practica 1 de PLN"
 readme = "README.md"
 requires-python = ">=3.12"
