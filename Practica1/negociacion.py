@@ -33,6 +33,7 @@ estado_global: dict[str, Any] = {
     "objetivo": {},
     "faltantes": {},
     "sobrantes": {},
+    "objetivo_cumplido": False,
     "ultima_propuesta_ts": 0.0,
 }
 
@@ -47,20 +48,26 @@ def construir_estado(info: dict[str, Any], gente: list[Any]) -> dict[str, Any]:
 
     faltantes = _calcular_faltantes(recursos, objetivo)
     sobrantes = _calcular_sobrantes(recursos, objetivo)
+    objetivo_cumplido = not faltantes
 
     estado_global["recursos"] = recursos
     estado_global["objetivo"] = objetivo
     estado_global["faltantes"] = faltantes
     estado_global["sobrantes"] = sobrantes
+    estado_global["objetivo_cumplido"] = objetivo_cumplido
+
+    if objetivo_cumplido:
+        logger.info("=== OBJETIVO CUMPLIDO === Modo adquisicion de oro activo")
 
     logger.info(
-        "Estado | recursos=%s objetivo=%s faltantes=%s sobrantes=%s otros=%s correos=%s",
+        "Estado | recursos=%s objetivo=%s faltantes=%s sobrantes=%s otros=%s correos=%s objetivo_cumplido=%s",
         recursos,
         objetivo,
         faltantes,
         sobrantes,
         otros,
         len(buzon),
+        objetivo_cumplido,
     )
 
     return {
@@ -71,6 +78,7 @@ def construir_estado(info: dict[str, Any], gente: list[Any]) -> dict[str, Any]:
         "materiales": materiales,
         "faltantes": faltantes,
         "sobrantes": sobrantes,
+        "objetivo_cumplido": objetivo_cumplido,
     }
 
 
@@ -399,6 +407,7 @@ def _recalcular_estado_derivado() -> None:
 
     estado_global["faltantes"] = _calcular_faltantes(recursos, objetivo)
     estado_global["sobrantes"] = _calcular_sobrantes(recursos, objetivo)
+    estado_global["objetivo_cumplido"] = not estado_global["faltantes"]
 
 
 def _estado_dinamico(estado_base: dict[str, Any]) -> dict[str, Any]:
@@ -418,4 +427,5 @@ def _estado_dinamico(estado_base: dict[str, Any]) -> dict[str, Any]:
         estado["faltantes"] = dict(faltantes)
     if isinstance(sobrantes, dict):
         estado["sobrantes"] = dict(sobrantes)
+    estado["objetivo_cumplido"] = estado_global.get("objetivo_cumplido", False)
     return estado

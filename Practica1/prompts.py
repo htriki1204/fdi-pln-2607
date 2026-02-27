@@ -86,12 +86,17 @@ def construir_prompt_sistema(estado: dict[str, Any]) -> str:
     faltantes = estado.get("faltantes", {})
     sobrantes = estado.get("sobrantes", {})
     otros = estado.get("otros", [])
+    objetivo_cumplido = estado.get("objetivo_cumplido", False)
+
+    sobrantes_str = _fmt_recursos(sobrantes)
+    otros_str = ", ".join(otros) if otros else "nadie"
+
+    if objetivo_cumplido:
+        return _prompt_sistema_modo_oro(recursos, objetivo, sobrantes_str, otros_str)
 
     nunca_dar = _lista_nunca_dar(recursos, objetivo)
     nunca_dar_str = ", ".join(nunca_dar) if nunca_dar else "ninguno"
-    sobrantes_str = _fmt_recursos(sobrantes)
     faltantes_str = _fmt_recursos(faltantes)
-    otros_str = ", ".join(otros) if otros else "nadie"
 
     return f"""\
 Tu nombre es {MI_ALIAS}. Intercambias recursos con otros agentes.
@@ -140,10 +145,21 @@ def construir_user_prompt_proactivo(
     sobrantes = estado.get("sobrantes", {})
     faltantes = estado.get("faltantes", {})
     otros = estado.get("otros", [])
+    objetivo_cumplido = estado.get("objetivo_cumplido", False)
+
+    destinatario = random.choice(otros) if otros else None
+
+    if objetivo_cumplido:
+        sobra_no_oro = {k: v for k, v in sobrantes.items() if k != "oro"}
+        if sobra_no_oro and destinatario:
+            material = random.choice(list(sobra_no_oro.keys()))
+            return f"""\
+No tienes correos. Envia UNA carta a {destinatario}. \
+Ofrece 1 {material} a cambio de 1 oro. Usa enviar_carta."""
+        return "No tienes recursos sobrantes para intercambiar por oro. Usa no_accion."
 
     sobra_ejemplo = random.choice(list(sobrantes.keys())) if sobrantes else None
     falta_ejemplo = random.choice(list(faltantes.keys())) if faltantes else None
-    destinatario = random.choice(otros) if otros else None
 
     if sobra_ejemplo and falta_ejemplo and destinatario:
         return f"""\
@@ -166,6 +182,25 @@ def construir_user_prompt_correo(
     objetivo = estado.get("objetivo", {})
     sobrantes = estado.get("sobrantes", {})
     faltantes = estado.get("faltantes", {})
+    objetivo_cumplido = estado.get("objetivo_cumplido", False)
+
+    sobra_txt = _fmt_recursos(sobrantes)
+
+    if objetivo_cumplido:
+        sobra_no_oro = {k: v for k, v in sobrantes.items() if k != "oro"}
+        sobra_no_oro_txt = _fmt_recursos(sobra_no_oro)
+        return f"""\
+{remitente} te ha enviado un correo.
+Asunto: {asunto}
+Cuerpo: {cuerpo}
+
+Ya has cumplido tu objetivo. Ahora solo quieres ORO.
+- Puedes dar: {sobra_no_oro_txt}.
+- Solo aceptas oro a cambio.
+
+Si te ofrece oro a cambio de algo que te sobra  enviar_paquete.
+Si no haz contraoferta con enviar_carta: ofrece materiales sobrantes por oro.
+Usa UNA sola tool."""
 
     no_dar = [
         m
@@ -173,7 +208,6 @@ def construir_user_prompt_correo(
         if recursos.get(m, 0) <= objetivo.get(m, 0)
     ]
     no_dar_txt = ", ".join(no_dar) if no_dar else "ninguno"
-    sobra_txt = _fmt_recursos(sobrantes)
     falta_txt = _fmt_recursos(faltantes)
 
     return f"""\
@@ -195,6 +229,44 @@ Usa UNA sola tool."""
 # ---------------------------------------------------------------------------
 # Helpers internos
 # ---------------------------------------------------------------------------
+
+
+def _prompt_sistema_modo_oro(
+    recursos: dict[str, int],
+    objetivo: dict[str, int],
+    sobrantes_str: str,
+    otros_str: str,
+) -> str:
+    """Prompt de sistema cuando el objetivo ya esta cumplido (modo oro)."""
+    sobra_no_oro = {
+        k: v for k, v in recursos.items() if k != "oro" and v > objetivo.get(k, 0)
+    }
+    intercambiable_str = _fmt_recursos(sobra_no_oro)
+
+    return f"""\
+Tu nombre es {MI_ALIAS}. Intercambias recursos con otros agentes.
+
+*** HAS CUMPLIDO TODOS TUS OBJETIVOS. ***
+Ahora tu UNICO objetivo es conseguir la mayor cantidad de ORO posible.
+
+TIENES: {json.dumps(recursos, ensure_ascii=False)}
+OBJETIVO (ya cumplido): {json.dumps(objetivo, ensure_ascii=False)}
+Materiales que puedes intercambiar por oro: {intercambiable_str}
+Otros agentes: {otros_str}
+
+=== REGLAS ===
+- NUNCA des oro. Solo RECIBES oro.
+- Ofrece materiales sobrantes a cambio de oro.
+- Si alguien te ofrece oro a cambio de materiales que te sobran → acepta.
+- Si no te ofrecen oro → haz contraoferta pidiendo oro.
+
+=== FORMATO ===
+- Usa SOLO tools, no texto libre.
+- enviar_carta: destinatario, asunto y cuerpo son texto.
+- enviar_paquete: recursos es como {{"tela": 1}}. Incluye recursos_esperados \
+con lo que esperas a cambio ({{"oro": 1}}).
+- Si no hay buen trato posible, usa no_accion.
+"""
 
 
 def _lista_nunca_dar(recursos: dict[str, int], objetivo: dict[str, int]) -> list[str]:
