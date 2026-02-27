@@ -10,7 +10,7 @@ Estrategia base:
 - Si recibe una oferta favorable, envia paquete directamente.
 - Tras enviar paquete, envia carta de confirmacion con lo que espera recibir.
 - Si la oferta no conviene, propone contraoferta simple 1x1.
-- Si no hay correos, puede lanzar propuesta proactiva (con cooldown).
+- Si no hay correos, puede lanzar propuesta proactiva (con cooldown, para no saturar buzones de otros agentes).
 
 ## Ejecucion
 1. Arrancar Butler.
@@ -27,6 +27,28 @@ Para lanzar varias instancias:
 FDI_PLN__ALIAS=agente_1 FDI_PLN__LOG_FILE=logs/agente_1.log uv run --env-file .env main.py
 FDI_PLN__ALIAS=agente_2 FDI_PLN__LOG_FILE=logs/agente_2.log uv run --env-file .env main.py
 FDI_PLN__ALIAS=agente_3 FDI_PLN__LOG_FILE=logs/agente_3.log uv run --env-file .env main.py
+```
+
+## Ejecucion desde wheel (`.whl`)
+Instalar el .whl y ejecutar el binario `fdi-pln-2607-p1` (sin `uv run`):
+
+```bash
+uv tool install /ruta/al/fdi_pln_2607_p1-1.0-py3-none-any.whl
+```
+
+Definir variables de entorno (ejemplo minimo):
+
+```bash
+export FDI_PLN__BUTLER_ADDRESS=127.0.0.1:7719
+export FDI_PLN__OLLAMA_HOST=http://127.0.0.1:11434
+export FDI_PLN__MODEL=ministral-3:8b
+export FDI_PLN__ALIAS=agenteGrupo7
+```
+
+Lanzar agente:
+
+```bash
+fdi-pln-2607-p1
 ```
 
 ## Variables `.env`
