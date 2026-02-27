@@ -28,7 +28,6 @@ estado_global: dict[str, Any] = {
     "objetivo": {},
     "faltantes": {},
     "sobrantes": {},
-    "ofertas_pendientes": [],
     "ultima_propuesta_ts": 0.0,
 }
 
@@ -184,13 +183,14 @@ def procesar_correo(estado: dict[str, Any], uid: str, correo: dict[str, Any]) ->
     )
 
     try:
-        system_prompt = _construir_prompt_sistema(estado)
+        estado_actual = _estado_dinamico(estado)
+        system_prompt = _construir_prompt_sistema(estado_actual)
 
         # Construir listas legibles para reforzar en user prompt
-        recursos_act = estado.get("recursos", {})
-        objetivo_act = estado.get("objetivo", {})
-        sobrantes_act = estado.get("sobrantes", {})
-        faltantes_act = estado.get("faltantes", {})
+        recursos_act = estado_actual.get("recursos", {})
+        objetivo_act = estado_actual.get("objetivo", {})
+        sobrantes_act = estado_actual.get("sobrantes", {})
+        faltantes_act = estado_actual.get("faltantes", {})
         no_dar = [
             m
             for m in sorted(set(recursos_act) | set(objetivo_act))
@@ -385,6 +385,12 @@ def _extraer_tool_call(tool_call: Any) -> tuple[str, dict[str, Any]]:
 
 def _ejecutar_tool_calls(tool_calls: list[Any]) -> None:
     """Ejecuta tool calls devueltas por la IA."""
+    if len(tool_calls) > 1:
+        logger.warning(
+            "LLM devolvio %s tool calls; se ejecutara solo la primera valida",
+            len(tool_calls),
+        )
+
     for tool_call in tool_calls:
         name, args = _extraer_tool_call(tool_call)
         if not name:
@@ -395,15 +401,15 @@ def _ejecutar_tool_calls(tool_calls: list[Any]) -> None:
 
         if name == "no_accion":
             logger.info("Sin accion: %s", args.get("razon", "sin razon"))
-            continue
+            return
 
         if name == "enviar_carta":
             _tool_enviar_carta(args)
-            continue
+            return
 
         if name == "enviar_paquete":
             _tool_enviar_paquete(args)
-            continue
+            return
 
         logger.warning("Tool desconocida: %s", name)
 
@@ -539,3 +545,36 @@ def _descontar_stock_local(envio: dict[str, int]) -> None:
 
     for material, cantidad in envio.items():
         recursos[material] = max(0, int(recursos.get(material, 0)) - cantidad)
+
+    _recalcular_estado_derivado()
+
+
+def _recalcular_estado_derivado() -> None:
+    """Recalcula faltantes y sobrantes en estado_global."""
+    recursos = estado_global.get("recursos")
+    objetivo = estado_global.get("objetivo")
+    if not isinstance(recursos, dict) or not isinstance(objetivo, dict):
+        return
+
+    estado_global["faltantes"] = _calcular_faltantes(recursos, objetivo)
+    estado_global["sobrantes"] = _calcular_sobrantes(recursos, objetivo)
+
+
+def _estado_dinamico(estado_base: dict[str, Any]) -> dict[str, Any]:
+    """Fusiona estado de ciclo con el estado_global mas reciente."""
+    _recalcular_estado_derivado()
+    estado = dict(estado_base)
+    recursos = estado_global.get("recursos")
+    objetivo = estado_global.get("objetivo")
+    faltantes = estado_global.get("faltantes")
+    sobrantes = estado_global.get("sobrantes")
+
+    if isinstance(recursos, dict):
+        estado["recursos"] = dict(recursos)
+    if isinstance(objetivo, dict):
+        estado["objetivo"] = dict(objetivo)
+    if isinstance(faltantes, dict):
+        estado["faltantes"] = dict(faltantes)
+    if isinstance(sobrantes, dict):
+        estado["sobrantes"] = dict(sobrantes)
+    return estado
