@@ -44,7 +44,6 @@ def construir_estado(info: dict[str, Any], gente: list[Any]) -> dict[str, Any]:
     objetivo = parse_resource_map(info.get("Objetivo"))
     buzon = parse_mailbox(info.get("Buzon"))
     otros = parse_other_aliases(gente)
-    materiales = sorted(set(recursos) | set(objetivo))
 
     faltantes = _calcular_faltantes(recursos, objetivo)
     sobrantes = _calcular_sobrantes(recursos, objetivo)
@@ -75,7 +74,6 @@ def construir_estado(info: dict[str, Any], gente: list[Any]) -> dict[str, Any]:
         "objetivo": objetivo,
         "buzon": buzon,
         "otros": otros,
-        "materiales": materiales,
         "faltantes": faltantes,
         "sobrantes": sobrantes,
         "objetivo_cumplido": objetivo_cumplido,

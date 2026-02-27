@@ -17,12 +17,12 @@ def _int_env(var_name: str, default: int) -> int:
 
 
 BUTLER_ADDRESS = (
-    os.getenv("FDI_PLN__BUTLER_ADDRESS", "147.96.84.134:7719").strip().rstrip("/")
+    os.getenv("FDI_PLN__BUTLER_ADDRESS", "127.0.0.1:7719").strip().rstrip("/")
 )
 BASE_URL = f"http://{BUTLER_ADDRESS}"
-MI_ALIAS = os.getenv("FDI_PLN__ALIAS", "agent")
+MI_ALIAS = os.getenv("FDI_PLN__ALIAS", "agenteGrupo7")
 OLLAMA_HOST = os.getenv("FDI_PLN__OLLAMA_HOST", "http://127.0.0.1:11434")
-MODEL_NAME = os.getenv("FDI_PLN__MODEL", "llama3.2:latest")
+MODEL_NAME = os.getenv("FDI_PLN__MODEL", "ministral-3:8b")
 
 REQUEST_TIMEOUT = _int_env("FDI_PLN__REQUEST_TIMEOUT", 10)
 CYCLE_SECONDS = _int_env("FDI_PLN__CYCLE_SECONDS", 10)
