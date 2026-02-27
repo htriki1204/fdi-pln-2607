@@ -16,4 +16,11 @@ fdi-pln-2607-p1 = "main:main"
 package = true
 
 [tool.setuptools]
-py-modules = ["main", "api_butler", "negociacion", "settings", "logger_config"]
+py-modules = [
+    "main",
+    "api_butler",
+    "negociacion",
+    "prompts",
+    "settings",
+    "logger_config",
+]
