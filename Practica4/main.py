@@ -101,7 +101,7 @@ class BuscadorQuijoteApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Static(
-            "Escribe un texto, pulsa Enter o el boton Buscar y veras los mismos resultados que antes, ahora en una interfaz mas comoda.",
+            "Escribe un texto, pulsa Enter o el boton Buscar para encontrar los pasajes que coincidan con el texto.",
             id="intro",
         )
         with Horizontal(id="busqueda"):
