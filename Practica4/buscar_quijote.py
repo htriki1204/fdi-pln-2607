@@ -6,12 +6,28 @@ import sys
 from pathlib import Path
 
 
-RUTA_QUIJOTE = Path(__file__).with_name("2000-h.htm")
+LIMITE_RESULTADOS = 5
 PATRON_BLOQUES = re.compile(
     r"<h3\b[^>]*>.*?</h3>|<p\b[^>]*>.*?</p>",
     re.IGNORECASE | re.DOTALL,
 )
 PATRON_ETIQUETAS = re.compile(r"<[^>]+>")
+
+
+def obtener_ruta_quijote() -> Path:
+    candidatas = [
+        Path(__file__).resolve().with_name("2000-h.htm"),
+        Path.cwd() / "2000-h.htm",
+    ]
+
+    for candidata in candidatas:
+        if candidata.exists():
+            return candidata
+
+    return candidatas[0]
+
+
+RUTA_QUIJOTE = obtener_ruta_quijote()
 
 
 def limpiar_html(fragmento: str) -> str:
@@ -47,6 +63,25 @@ def buscar_pasajes(pasajes: list[dict[str, str]], consulta: str) -> list[dict[st
     return [pasaje for pasaje in pasajes if consulta_normalizada in pasaje["texto"].lower()]
 
 
+def formatear_resultados(
+    consulta: str, resultados: list[dict[str, str]], limite: int = LIMITE_RESULTADOS
+) -> str:
+    if not resultados:
+        return f'No se han encontrado pasajes con "{consulta}".'
+
+    lineas = [f'Se han encontrado {len(resultados)} pasajes con "{consulta}".', ""]
+
+    for indice, resultado in enumerate(resultados[:limite], start=1):
+        lineas.append(f"{indice}. {resultado['encabezado']}")
+        lineas.append(resultado["texto"])
+        lineas.append("")
+
+    if len(resultados) > limite:
+        lineas.append(f"Se muestran solo los {limite} primeros resultados de {len(resultados)}.")
+
+    return "\n".join(lineas).rstrip()
+
+
 def obtener_consulta() -> str:
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:]).strip()
@@ -60,26 +95,12 @@ def main() -> None:
 
     consulta = obtener_consulta()
     if not consulta:
-        print("No has introducido ningún texto.")
+        print("No has introducido ningun texto.")
         raise SystemExit(1)
 
     pasajes = extraer_pasajes(RUTA_QUIJOTE)
     resultados = buscar_pasajes(pasajes, consulta)
-
-    if not resultados:
-        print(f'No se han encontrado pasajes con "{consulta}".')
-        return
-
-    print(f'Se han encontrado {len(resultados)} pasajes con "{consulta}".')
-    print()
-
-    for indice, resultado in enumerate(resultados[:5], start=1):
-        print(f"{indice}. {resultado['encabezado']}")
-        print(resultado["texto"])
-        print()
-
-    if len(resultados) > 5:
-        print(f"Se muestran solo los 5 primeros resultados de {len(resultados)}.")
+    print(formatear_resultados(consulta, resultados))
 
 
 if __name__ == "__main__":
