@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 
 from rich.text import Text
@@ -12,8 +13,35 @@ from buscar_quijote import (
     RUTA_QUIJOTE,
     buscar_pasajes,
     extraer_pasajes,
-    formatear_resultados,
 )
+
+
+ESTILO_RESALTADO = "bold #201a16 on #f0bf5a"
+
+
+def construir_resultados_enriquecidos(consulta: str, resultados: list[dict[str, str]]) -> Text:
+    if not resultados:
+        return Text(f'No se han encontrado pasajes con "{consulta}".')
+
+    patron = re.compile(re.escape(consulta), re.IGNORECASE)
+    texto = Text(f'Se han encontrado {len(resultados)} pasajes con "{consulta}".\n\n')
+
+    for indice, resultado in enumerate(resultados[:LIMITE_RESULTADOS], start=1):
+        texto.append(f"{indice}. {resultado['encabezado']}\n")
+
+        pasaje = Text(resultado["texto"])
+        for coincidencia in patron.finditer(resultado["texto"]):
+            pasaje.stylize(ESTILO_RESALTADO, coincidencia.start(), coincidencia.end())
+
+        texto.append_text(pasaje)
+        texto.append("\n\n")
+
+    if len(resultados) > LIMITE_RESULTADOS:
+        texto.append(
+            f"Se muestran solo los {LIMITE_RESULTADOS} primeros resultados de {len(resultados)}."
+        )
+
+    return texto
 
 
 class BuscadorQuijoteApp(App[None]):
@@ -116,8 +144,12 @@ class BuscadorQuijoteApp(App[None]):
     def actualizar_estado(self, mensaje: str) -> None:
         self.query_one("#estado", Static).update(Text(mensaje))
 
-    def mostrar_resultados(self, mensaje: str) -> None:
-        self.query_one("#resultados", Static).update(Text(mensaje))
+    def mostrar_resultados(self, renderizable: str | Text) -> None:
+        if isinstance(renderizable, Text):
+            self.query_one("#resultados", Static).update(renderizable)
+            return
+
+        self.query_one("#resultados", Static).update(Text(renderizable))
 
     def realizar_busqueda(self) -> None:
         if not self.pasajes:
@@ -133,7 +165,7 @@ class BuscadorQuijoteApp(App[None]):
         self.actualizar_estado(
             f'Consulta actual: "{consulta}". Coincidencias encontradas: {len(resultados)}.'
         )
-        self.mostrar_resultados(formatear_resultados(consulta, resultados))
+        self.mostrar_resultados(construir_resultados_enriquecidos(consulta, resultados))
 
 
 def main() -> None:
