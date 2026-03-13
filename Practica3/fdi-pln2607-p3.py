@@ -278,7 +278,7 @@ app = typer.Typer(
 def decode(fichero: Path) -> None:
     """Convierte un fichero PLNCG26 a texto UTF-8 por stdout."""
 
-    sys.stdout.write(decode_blob(fichero.read_bytes()))
+    sys.stdout.buffer.write(decode_blob(fichero.read_bytes()).encode("utf-8"))
 
 
 @app.command()
