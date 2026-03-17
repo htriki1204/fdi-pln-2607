@@ -11,6 +11,13 @@ try:
 except ImportError:  # pragma: no cover - depende del entorno
     spacy = None
 
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import linear_kernel
+except ImportError:  # pragma: no cover - depende del entorno
+    TfidfVectorizer = None
+    linear_kernel = None
+
 
 LIMITE_RESULTADOS = 5
 PATRON_BLOQUES = re.compile(
@@ -57,7 +64,7 @@ def obtener_nlp():
 
 
 @lru_cache(maxsize=6000)
-def obtener_lemmas_significativos(texto: str) -> frozenset[str]:
+def obtener_lista_lemmas_significativos(texto: str) -> tuple[str, ...]:
     doc = obtener_nlp()(texto)
     lemmas: list[str] = []
 
@@ -68,7 +75,40 @@ def obtener_lemmas_significativos(texto: str) -> frozenset[str]:
         lemma = token.lemma_.strip().lower() or token.lower_
         lemmas.append(lemma)
 
-    return frozenset(lemmas)
+    return tuple(lemmas)
+
+
+@lru_cache(maxsize=6000)
+def obtener_lemmas_significativos(texto: str) -> frozenset[str]:
+    return frozenset(obtener_lista_lemmas_significativos(texto))
+
+
+@lru_cache(maxsize=6000)
+def normalizar_texto_tfidf(texto: str) -> str:
+    return " ".join(obtener_lista_lemmas_significativos(texto))
+
+
+@lru_cache(maxsize=1)
+def construir_indice_tfidf(textos_normalizados: tuple[str, ...]):
+    if TfidfVectorizer is None or linear_kernel is None:
+        raise RuntimeError(
+            "scikit-learn no esta disponible. Ejecuta `uv sync` en Practica4 para instalar las dependencias."
+        )
+
+    vectorizer = TfidfVectorizer()
+    matriz = vectorizer.fit_transform(textos_normalizados)
+    return vectorizer, matriz
+
+
+def obtener_scores_tfidf(pasajes: list[dict[str, str]], consulta: str) -> list[float]:
+    consulta_normalizada = normalizar_texto_tfidf(consulta)
+    if not consulta_normalizada:
+        return [0.0] * len(pasajes)
+
+    textos_normalizados = tuple(normalizar_texto_tfidf(pasaje["texto"]) for pasaje in pasajes)
+    vectorizer, matriz = construir_indice_tfidf(textos_normalizados)
+    consulta_vector = vectorizer.transform([consulta_normalizada])
+    return linear_kernel(consulta_vector, matriz)[0].tolist()
 
 
 def obtener_rangos_lemmas_coincidentes(texto: str, consulta: str) -> list[tuple[int, int]]:
@@ -118,25 +158,27 @@ def buscar_pasajes_con_modo(
     if not lemmas_consulta:
         return [], "and"
 
-    exactos: list[dict[str, str]] = []
-    parciales: list[tuple[int, int, dict[str, str]]] = []
+    scores_tfidf = obtener_scores_tfidf(pasajes, consulta)
+    exactos: list[tuple[float, int, dict[str, str]]] = []
+    parciales: list[tuple[int, float, int, dict[str, str]]] = []
 
     for indice, pasaje in enumerate(pasajes):
         lemmas_pasaje = obtener_lemmas_significativos(pasaje["texto"])
 
         if lemmas_consulta.issubset(lemmas_pasaje):
-            exactos.append(pasaje)
+            exactos.append((scores_tfidf[indice], indice, pasaje))
             continue
 
         coincidencias = len(lemmas_consulta & lemmas_pasaje)
         if coincidencias:
-            parciales.append((coincidencias, indice, pasaje))
+            parciales.append((coincidencias, scores_tfidf[indice], indice, pasaje))
 
     if exactos:
-        return exactos, "and"
+        exactos.sort(key=lambda item: (-item[0], item[1]))
+        return [pasaje for _, _, pasaje in exactos], "and"
 
-    parciales.sort(key=lambda item: (-item[0], item[1]))
-    return [pasaje for _, _, pasaje in parciales], "or"
+    parciales.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [pasaje for _, _, _, pasaje in parciales], "or"
 
 
 def buscar_pasajes(pasajes: list[dict[str, str]], consulta: str) -> list[dict[str, str]]:
