@@ -29,13 +29,17 @@ def construir_resultados_enriquecidos(
 
     if modo_busqueda == "or":
         texto.append("No hubo una coincidencia completa por lemas.\n")
-        texto.append("Se muestran coincidencias parciales con alguno de los lemas buscados.\n\n")
+        texto.append(
+            "Se muestran coincidencias parciales con alguno de los lemas buscados.\n\n"
+        )
 
     for indice, resultado in enumerate(resultados[:LIMITE_RESULTADOS], start=1):
         texto.append(f"{indice}. {resultado['encabezado']}\n")
 
         pasaje = Text(resultado["texto"])
-        for inicio, fin in obtener_rangos_lemmas_coincidentes(resultado["texto"], consulta):
+        for inicio, fin in obtener_rangos_lemmas_coincidentes(
+            resultado["texto"], consulta
+        ):
             pasaje.stylize(ESTILO_RESALTADO, inicio, fin)
 
         texto.append_text(pasaje)
@@ -110,7 +114,10 @@ class BuscadorQuijoteApp(App[None]):
             id="intro",
         )
         with Horizontal(id="busqueda"):
-            yield Input(placeholder="Introduce un texto para buscar en Don Quijote", id="consulta")
+            yield Input(
+                placeholder="Introduce un texto para buscar en Don Quijote",
+                id="consulta",
+            )
             yield Button("Buscar", id="buscar", variant="primary")
         yield Static("Cargando pasajes del Quijote...", id="estado")
         with VerticalScroll(id="resultados_wrap"):
@@ -167,12 +174,12 @@ class BuscadorQuijoteApp(App[None]):
             return
 
         resultados, modo_busqueda = buscar_pasajes_con_modo(self.pasajes, consulta)
-        mensaje_estado = (
-            f'Consulta actual: "{consulta}". Coincidencias encontradas: {len(resultados)}.'
-        )
+        mensaje_estado = f'Consulta actual: "{consulta}". Coincidencias encontradas: {len(resultados)}.'
 
         if modo_busqueda == "or" and resultados:
-            mensaje_estado += " Sin coincidencia completa; mostrando coincidencias parciales."
+            mensaje_estado += (
+                " Sin coincidencia completa; mostrando coincidencias parciales."
+            )
 
         self.actualizar_estado(mensaje_estado)
         self.mostrar_resultados(

@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Buscador sencillo de pasajes de Don Quijote por terminal"
 requires-python = ">=3.14"
 dependencies = [
+    "nltk",
+    "rich",
+    "spacy",
+    "spacy-lookups-data",
     "textual",
 ]
 

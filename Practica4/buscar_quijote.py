@@ -3,20 +3,15 @@ from __future__ import annotations
 import html
 import re
 import sys
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
+from nltk.text import TextCollection
 
 try:
     import spacy
 except ImportError:  # pragma: no cover - depende del entorno
     spacy = None
-
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import linear_kernel
-except ImportError:  # pragma: no cover - depende del entorno
-    TfidfVectorizer = None
-    linear_kernel = None
 
 
 LIMITE_RESULTADOS = 5
@@ -44,7 +39,9 @@ RUTA_QUIJOTE = obtener_ruta_quijote()
 
 
 def limpiar_html(fragmento: str) -> str:
-    fragmento = fragmento.replace("<br />", " ").replace("<br/>", " ").replace("<br>", " ")
+    fragmento = (
+        fragmento.replace("<br />", " ").replace("<br/>", " ").replace("<br>", " ")
+    )
     texto = PATRON_ETIQUETAS.sub("", fragmento)
     texto = html.unescape(texto)
     return " ".join(texto.split())
@@ -83,35 +80,48 @@ def obtener_lemmas_significativos(texto: str) -> frozenset[str]:
     return frozenset(obtener_lista_lemmas_significativos(texto))
 
 
-@lru_cache(maxsize=6000)
-def normalizar_texto_tfidf(texto: str) -> str:
-    return " ".join(obtener_lista_lemmas_significativos(texto))
-
-
 @lru_cache(maxsize=1)
-def construir_indice_tfidf(textos_normalizados: tuple[str, ...]):
-    if TfidfVectorizer is None or linear_kernel is None:
+def construir_indice_tfidf(textos_normalizados: tuple[tuple[str, ...], ...]):
+    if TextCollection is None:
         raise RuntimeError(
-            "scikit-learn no esta disponible. Ejecuta `uv sync` en Practica4 para instalar las dependencias."
+            "NLTK no esta disponible. Ejecuta `uv sync` en Practica4 para instalar las dependencias."
         )
 
-    vectorizer = TfidfVectorizer()
-    matriz = vectorizer.fit_transform(textos_normalizados)
-    return vectorizer, matriz
+    return TextCollection(textos_normalizados)
 
 
 def obtener_scores_tfidf(pasajes: list[dict[str, str]], consulta: str) -> list[float]:
-    consulta_normalizada = normalizar_texto_tfidf(consulta)
-    if not consulta_normalizada:
+    tokens_consulta = obtener_lista_lemmas_significativos(consulta)
+    if not tokens_consulta:
         return [0.0] * len(pasajes)
 
-    textos_normalizados = tuple(normalizar_texto_tfidf(pasaje["texto"]) for pasaje in pasajes)
-    vectorizer, matriz = construir_indice_tfidf(textos_normalizados)
-    consulta_vector = vectorizer.transform([consulta_normalizada])
-    return linear_kernel(consulta_vector, matriz)[0].tolist()
+    textos_normalizados = tuple(
+        obtener_lista_lemmas_significativos(pasaje["texto"]) for pasaje in pasajes
+    )
+    coleccion = construir_indice_tfidf(textos_normalizados)
+    frecuencias_consulta = Counter(tokens_consulta)
+    total_terminos_consulta = len(tokens_consulta)
+    scores: list[float] = []
+
+    for tokens_documento in textos_normalizados:
+        if not tokens_documento:
+            scores.append(0.0)
+            continue
+
+        score = 0.0
+
+        for termino, frecuencia in frecuencias_consulta.items():
+            peso_consulta = frecuencia / total_terminos_consulta
+            score += peso_consulta * coleccion.tf_idf(termino, tokens_documento)
+
+        scores.append(score)
+
+    return scores
 
 
-def obtener_rangos_lemmas_coincidentes(texto: str, consulta: str) -> list[tuple[int, int]]:
+def obtener_rangos_lemmas_coincidentes(
+    texto: str, consulta: str
+) -> list[tuple[int, int]]:
     lemmas_consulta = obtener_lemmas_significativos(consulta)
     if not lemmas_consulta:
         return []
@@ -181,7 +191,9 @@ def buscar_pasajes_con_modo(
     return [pasaje for _, _, _, pasaje in parciales], "or"
 
 
-def buscar_pasajes(pasajes: list[dict[str, str]], consulta: str) -> list[dict[str, str]]:
+def buscar_pasajes(
+    pasajes: list[dict[str, str]], consulta: str
+) -> list[dict[str, str]]:
     resultados, _ = buscar_pasajes_con_modo(pasajes, consulta)
     return resultados
 
@@ -212,7 +224,9 @@ def formatear_resultados(
         lineas.append("")
 
     if len(resultados) > limite:
-        lineas.append(f"Se muestran solo los {limite} primeros resultados de {len(resultados)}.")
+        lineas.append(
+            f"Se muestran solo los {limite} primeros resultados de {len(resultados)}."
+        )
 
     return "\n".join(lineas).rstrip()
 
