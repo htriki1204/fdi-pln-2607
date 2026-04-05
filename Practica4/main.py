@@ -247,7 +247,9 @@ class BuscadorQuijoteApp(App[None]):
             )
             try:
                 resultados_semanticos, modelo = buscar_pasajes_semanticos(
-                    self.pasajes, consulta, limite=LIMITE_RESULTADOS
+                    self.pasajes,
+                    consulta,
+                    limite=LIMITE_RESULTADOS,
                 )
             except Exception as error:
                 mensaje_error = (

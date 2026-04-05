@@ -5,6 +5,8 @@ description = "Buscador sencillo de pasajes de Don Quijote por terminal"
 requires-python = ">=3.14"
 dependencies = [
     "nltk",
+    "numpy",
+    "ollama",
     "rich",
     "spacy",
     "spacy-lookups-data",
@@ -19,4 +21,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main", "buscar_quijote"]
+py-modules = ["main", "buscar_quijote", "busqueda_semantica"]
