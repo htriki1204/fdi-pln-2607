@@ -16,14 +16,17 @@ from buscar_quijote import (
     obtener_rangos_lemmas_coincidentes,
 )
 from busqueda_semantica import MODELO_EMBEDDINGS, buscar_pasajes_semanticos
+from rag_quijote import MODELO_RAG, responder_con_rag
 
 
 ESTILO_RESALTADO = "bold #201a16 on #f0bf5a"
 MODO_CLASICO = "clasica"
 MODO_EMBEDDINGS = "embeddings"
+MODO_RAG = "rag"
 OPCIONES_MODO = [
     ("1. Busqueda clasica", MODO_CLASICO),
     ("2. Busqueda por embeddings", MODO_EMBEDDINGS),
+    ("3. RAG", MODO_RAG),
 ]
 
 
@@ -94,12 +97,31 @@ def construir_resultados_semanticos_enriquecidos(
     return texto
 
 
+def construir_resultados_rag_enriquecidos(
+    consulta: str,
+    resultado_rag: dict[str, object],
+) -> Text:
+    texto = Text(f'Respuesta RAG para "{consulta}"\n')
+    texto.append(f"Modelo: {resultado_rag['modelo']}\n\n")
+    texto.append(str(resultado_rag["respuesta"]))
+
+    contexto = list(resultado_rag["contexto"])
+    if contexto:
+        texto.append("\n\nPasajes aportados al modelo:\n")
+        for entrada in contexto[:LIMITE_RESULTADOS]:
+            texto.append(
+                f"[{entrada['referencia']}] {entrada['encabezado']} ({entrada['fuente']})\n"
+            )
+
+    return texto
+
+
 def parsear_argumentos(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Buscador de pasajes de Don Quijote")
     parser.add_argument("consulta", nargs="*", help="Texto a buscar")
     parser.add_argument(
         "--modo",
-        choices=[MODO_CLASICO, MODO_EMBEDDINGS],
+        choices=[MODO_CLASICO, MODO_EMBEDDINGS, MODO_RAG],
         default=MODO_CLASICO,
         help="Modo de busqueda inicial",
     )
@@ -171,7 +193,7 @@ class BuscadorQuijoteApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Static(
-            "Elige un modo: clasico por lemas o semantico por embeddings. Luego escribe una consulta y busca pasajes del Quijote.",
+            "Elige un modo: clasico por lemas, semantico por embeddings o RAG. Luego escribe una consulta y busca pasajes del Quijote.",
             id="intro",
         )
         with Horizontal(id="busqueda"):
@@ -206,7 +228,7 @@ class BuscadorQuijoteApp(App[None]):
 
         self.pasajes = extraer_pasajes(RUTA_QUIJOTE)
         self.actualizar_estado(
-            f"Archivo cargado: {RUTA_QUIJOTE.name}. Pasajes disponibles: {len(self.pasajes)}. Modos disponibles: clasica y embeddings."
+            f"Archivo cargado: {RUTA_QUIJOTE.name}. Pasajes disponibles: {len(self.pasajes)}. Modos disponibles: clasica, embeddings y RAG."
         )
 
         if self.consulta_inicial:
@@ -267,6 +289,29 @@ class BuscadorQuijoteApp(App[None]):
                 construir_resultados_semanticos_enriquecidos(
                     consulta, resultados_semanticos, modelo
                 )
+            )
+            return
+
+        if modo == MODO_RAG:
+            self.actualizar_estado(
+                f'Consulta actual: "{consulta}". Recuperando contexto y generando respuesta con {MODELO_RAG}...'
+            )
+            try:
+                resultado_rag = responder_con_rag(consulta, self.pasajes)
+            except Exception as error:
+                mensaje_error = (
+                    f"No se ha podido ejecutar el modo RAG. Detalle: {error}"
+                )
+                self.actualizar_estado(mensaje_error)
+                self.mostrar_resultados(mensaje_error)
+                return
+
+            contexto = list(resultado_rag["contexto"])
+            self.actualizar_estado(
+                f'Consulta actual: "{consulta}". RAG completado con {len(contexto)} pasajes de contexto. Modelo: {resultado_rag["modelo"]}.'
+            )
+            self.mostrar_resultados(
+                construir_resultados_rag_enriquecidos(consulta, resultado_rag)
             )
             return
 
