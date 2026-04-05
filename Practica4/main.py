@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import sys
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Header, Input, Static
+from textual.widgets import Button, Footer, Header, Input, Select, Static
 
 from buscar_quijote import (
     LIMITE_RESULTADOS,
@@ -14,9 +15,16 @@ from buscar_quijote import (
     extraer_pasajes,
     obtener_rangos_lemmas_coincidentes,
 )
+from busqueda_semantica import MODELO_EMBEDDINGS, buscar_pasajes_semanticos
 
 
 ESTILO_RESALTADO = "bold #201a16 on #f0bf5a"
+MODO_CLASICO = "clasica"
+MODO_EMBEDDINGS = "embeddings"
+OPCIONES_MODO = [
+    ("1. Busqueda clasica", MODO_CLASICO),
+    ("2. Busqueda por embeddings", MODO_EMBEDDINGS),
+]
 
 
 def construir_resultados_enriquecidos(
@@ -53,9 +61,54 @@ def construir_resultados_enriquecidos(
     return texto
 
 
+def construir_resultados_semanticos_enriquecidos(
+    consulta: str,
+    resultados: list[dict[str, str | float | int]],
+    modelo: str,
+) -> Text:
+    if not resultados:
+        return Text(
+            f'No se han encontrado pasajes semanticamente similares a "{consulta}".'
+        )
+
+    texto = Text(
+        f'Se han encontrado {len(resultados)} pasajes semanticamente similares a "{consulta}".\n'
+    )
+    texto.append(f"Modelo de embeddings: {modelo}.\n\n")
+
+    for indice, resultado in enumerate(resultados[:LIMITE_RESULTADOS], start=1):
+        texto.append(
+            f"{indice}. {resultado['encabezado']} (score: {resultado['score']:.4f})\n"
+        )
+        texto.append(
+            f"Chunk original: pasajes {resultado['inicio']} a {resultado['fin']}\n"
+        )
+        texto.append(str(resultado["texto"]))
+        texto.append("\n\n")
+
+    if len(resultados) > LIMITE_RESULTADOS:
+        texto.append(
+            f"Se muestran solo los {LIMITE_RESULTADOS} primeros resultados de {len(resultados)}."
+        )
+
+    return texto
+
+
+def parsear_argumentos(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Buscador de pasajes de Don Quijote")
+    parser.add_argument("consulta", nargs="*", help="Texto a buscar")
+    parser.add_argument(
+        "--modo",
+        choices=[MODO_CLASICO, MODO_EMBEDDINGS],
+        default=MODO_CLASICO,
+        help="Modo de busqueda inicial",
+    )
+    return parser.parse_args(argv)
+
+
 class BuscadorQuijoteApp(App[None]):
     TITLE = "Don Quijote"
-    SUB_TITLE = "Buscador de pasajes por lemas"
+    SUB_TITLE = "Buscador clasico y semantico"
     CSS = """
     Screen {
         background: #f3ede2;
@@ -73,6 +126,11 @@ class BuscadorQuijoteApp(App[None]):
     #busqueda {
         margin: 1 2 0 2;
         height: auto;
+    }
+
+    #modo {
+        width: 28;
+        margin-right: 1;
     }
 
     #consulta {
@@ -102,18 +160,27 @@ class BuscadorQuijoteApp(App[None]):
     """
     BINDINGS = [("ctrl+q", "quit", "Salir"), ("ctrl+c", "quit", "Salir")]
 
-    def __init__(self, consulta_inicial: str = "") -> None:
+    def __init__(
+        self, consulta_inicial: str = "", modo_inicial: str = MODO_CLASICO
+    ) -> None:
         super().__init__()
         self.consulta_inicial = consulta_inicial
+        self.modo_inicial = modo_inicial
         self.pasajes: list[dict[str, str]] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Static(
-            "Escribe una palabra o frase. La busqueda compara palabras lematizadas para encontrar pasajes relacionados.",
+            "Elige un modo: clasico por lemas o semantico por embeddings. Luego escribe una consulta y busca pasajes del Quijote.",
             id="intro",
         )
         with Horizontal(id="busqueda"):
+            yield Select(
+                OPCIONES_MODO,
+                allow_blank=False,
+                value=self.modo_inicial,
+                id="modo",
+            )
             yield Input(
                 placeholder="Introduce un texto para buscar en Don Quijote",
                 id="consulta",
@@ -139,7 +206,7 @@ class BuscadorQuijoteApp(App[None]):
 
         self.pasajes = extraer_pasajes(RUTA_QUIJOTE)
         self.actualizar_estado(
-            f"Archivo cargado: {RUTA_QUIJOTE.name}. Pasajes disponibles: {len(self.pasajes)}. Se mostraran como maximo {LIMITE_RESULTADOS} resultados."
+            f"Archivo cargado: {RUTA_QUIJOTE.name}. Pasajes disponibles: {len(self.pasajes)}. Modos disponibles: clasica y embeddings."
         )
 
         if self.consulta_inicial:
@@ -168,9 +235,37 @@ class BuscadorQuijoteApp(App[None]):
             return
 
         consulta = self.query_one("#consulta", Input).value.strip()
+        modo = self.query_one("#modo", Select).value
         if not consulta:
             self.actualizar_estado("Esperando una consulta.")
             self.mostrar_resultados("No has introducido ningun texto.")
+            return
+
+        if modo == MODO_EMBEDDINGS:
+            self.actualizar_estado(
+                f'Consulta actual: "{consulta}". Generando o cargando embeddings con {MODELO_EMBEDDINGS}...'
+            )
+            try:
+                resultados_semanticos, modelo = buscar_pasajes_semanticos(
+                    self.pasajes, consulta, limite=LIMITE_RESULTADOS
+                )
+            except Exception as error:
+                mensaje_error = (
+                    "No se ha podido ejecutar la busqueda por embeddings. "
+                    f"Detalle: {error}"
+                )
+                self.actualizar_estado(mensaje_error)
+                self.mostrar_resultados(mensaje_error)
+                return
+
+            self.actualizar_estado(
+                f'Consulta actual: "{consulta}". Resultados semanticos: {len(resultados_semanticos)}. Modelo: {modelo}.'
+            )
+            self.mostrar_resultados(
+                construir_resultados_semanticos_enriquecidos(
+                    consulta, resultados_semanticos, modelo
+                )
+            )
             return
 
         resultados, modo_busqueda = buscar_pasajes_con_modo(self.pasajes, consulta)
@@ -188,8 +283,12 @@ class BuscadorQuijoteApp(App[None]):
 
 
 def main() -> None:
-    consulta_inicial = " ".join(sys.argv[1:]).strip()
-    BuscadorQuijoteApp(consulta_inicial=consulta_inicial).run()
+    argumentos = parsear_argumentos(sys.argv[1:])
+    consulta_inicial = " ".join(argumentos.consulta).strip()
+    BuscadorQuijoteApp(
+        consulta_inicial=consulta_inicial,
+        modo_inicial=argumentos.modo,
+    ).run()
 
 
 if __name__ == "__main__":
