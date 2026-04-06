@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import re
-import sys
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -189,68 +188,3 @@ def buscar_pasajes_con_modo(
 
     parciales.sort(key=lambda item: (-item[0], -item[1], item[2]))
     return [pasaje for _, _, _, pasaje in parciales], "or"
-
-
-def buscar_pasajes(
-    pasajes: list[dict[str, str]], consulta: str
-) -> list[dict[str, str]]:
-    resultados, _ = buscar_pasajes_con_modo(pasajes, consulta)
-    return resultados
-
-
-def formatear_resultados(
-    consulta: str,
-    resultados: list[dict[str, str]],
-    limite: int = LIMITE_RESULTADOS,
-    modo_busqueda: str = "and",
-) -> str:
-    if not resultados:
-        return f'No se han encontrado pasajes con "{consulta}".'
-
-    lineas = [f'Se han encontrado {len(resultados)} pasajes con "{consulta}".', ""]
-
-    if modo_busqueda == "or":
-        lineas.extend(
-            [
-                "No hubo una coincidencia completa por lemas.",
-                "Se muestran coincidencias parciales con alguno de los lemas buscados.",
-                "",
-            ]
-        )
-
-    for indice, resultado in enumerate(resultados[:limite], start=1):
-        lineas.append(f"{indice}. {resultado['encabezado']}")
-        lineas.append(resultado["texto"])
-        lineas.append("")
-
-    if len(resultados) > limite:
-        lineas.append(
-            f"Se muestran solo los {limite} primeros resultados de {len(resultados)}."
-        )
-
-    return "\n".join(lineas).rstrip()
-
-
-def obtener_consulta() -> str:
-    if len(sys.argv) > 1:
-        return " ".join(sys.argv[1:]).strip()
-    return input("Introduce un texto para buscar en Don Quijote: ").strip()
-
-
-def main() -> None:
-    if not RUTA_QUIJOTE.exists():
-        print(f"No encuentro el archivo: {RUTA_QUIJOTE}")
-        raise SystemExit(1)
-
-    consulta = obtener_consulta()
-    if not consulta:
-        print("No has introducido ningun texto.")
-        raise SystemExit(1)
-
-    pasajes = extraer_pasajes(RUTA_QUIJOTE)
-    resultados, modo_busqueda = buscar_pasajes_con_modo(pasajes, consulta)
-    print(formatear_resultados(consulta, resultados, modo_busqueda=modo_busqueda))
-
-
-if __name__ == "__main__":
-    main()

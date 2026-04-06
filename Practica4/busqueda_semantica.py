@@ -9,21 +9,14 @@ import ollama
 
 
 LIMITE_RESULTADOS = 5
-MODELO_EMBEDDINGS = os.getenv("FDI_PLN_P4_EMBED_MODEL", "llama3.2:latest")
-TAMANO_CHUNK = 3
-SOLAPE_CHUNK = 1
+MODELO_EMBEDDINGS = os.getenv("FDI_PLN_P4_EMBED_MODEL", "nomic-embed-text:latest")
 TAMANO_LOTE = 1
 TOKENS_POR_CHUNK = 512
 SOLAPE_TOKENS = TOKENS_POR_CHUNK // 4
-CHUNKING_PASAJES = "pasajes"
-CHUNKING_TOKENS = "tokens"
 
 
 def obtener_ruta_cache_embeddings(
     modelo: str = MODELO_EMBEDDINGS,
-    tamano_chunk: int = TAMANO_CHUNK,
-    solape_chunk: int = SOLAPE_CHUNK,
-    estrategia_chunking: str = CHUNKING_PASAJES,
     tokens_por_chunk: int = TOKENS_POR_CHUNK,
     solape_tokens: int = SOLAPE_TOKENS,
 ) -> Path:
@@ -31,69 +24,126 @@ def obtener_ruta_cache_embeddings(
         caracter if caracter.isalnum() or caracter in "._-" else "_"
         for caracter in modelo
     )
-    if estrategia_chunking == CHUNKING_TOKENS:
-        archivo = (
-            f"embeddings_quijote_{nombre}_tokens_{tokens_por_chunk}_{solape_tokens}.npz"
-        )
-    else:
-        archivo = f"embeddings_quijote_{nombre}_{tamano_chunk}_{solape_chunk}.npz"
+    archivo = (
+        f"embeddings_quijote_{nombre}_tokens_{tokens_por_chunk}_{solape_tokens}.npz"
+    )
     return Path(__file__).resolve().with_name(archivo)
 
 
-def combinar_encabezados(pasajes_chunk: list[dict[str, str]]) -> str:
-    encabezados: list[str] = []
-
-    for pasaje in pasajes_chunk:
-        encabezado = pasaje["encabezado"]
-        if encabezados and encabezados[-1] == encabezado:
-            continue
-        encabezados.append(encabezado)
-
-    if not encabezados:
-        return "Sin encabezado"
-
-    if len(encabezados) == 1:
-        return encabezados[0]
-
-    return f"{encabezados[0]} / {encabezados[-1]}"
-
-
-def contar_tokens_aproximados(texto: str) -> int:
-    return max(1, len(texto.split()))
-
-
-def construir_chunks_por_pasajes(
+def construir_capitulos(
     pasajes: list[dict[str, str]],
-    tamano_chunk: int = TAMANO_CHUNK,
-    solape_chunk: int = SOLAPE_CHUNK,
 ) -> list[dict[str, str | int]]:
     if not pasajes:
         return []
 
-    paso = max(1, tamano_chunk - solape_chunk)
-    chunks: list[dict[str, str | int]] = []
+    capitulos: list[dict[str, str | int]] = []
+    encabezado_actual = pasajes[0]["encabezado"]
+    inicio_actual = 0
+    pasajes_actuales: list[dict[str, str]] = []
 
-    for inicio in range(0, len(pasajes), paso):
-        grupo = pasajes[inicio : inicio + tamano_chunk]
-        if not grupo:
-            continue
+    def cerrar_capitulo(fin_actual: int) -> None:
+        palabras: list[str] = []
+        rangos_pasajes: list[dict[str, int]] = []
+        cursor = 0
 
-        texto = "\n".join(pasaje["texto"] for pasaje in grupo)
-        chunks.append(
+        for indice_pasaje, pasaje in enumerate(pasajes_actuales, start=inicio_actual):
+            palabras_pasaje = pasaje["texto"].split()
+            inicio_palabras = cursor
+            cursor += len(palabras_pasaje)
+            palabras.extend(palabras_pasaje)
+            rangos_pasajes.append(
+                {
+                    "indice": indice_pasaje,
+                    "inicio_palabras": inicio_palabras,
+                    "fin_palabras": cursor,
+                }
+            )
+
+        capitulos.append(
             {
-                "encabezado": combinar_encabezados(grupo),
-                "texto": texto,
-                "inicio": inicio,
-                "fin": inicio + len(grupo) - 1,
+                "encabezado": encabezado_actual,
+                "palabras": palabras,
+                "rangos_pasajes": rangos_pasajes,
+                "inicio": inicio_actual,
+                "fin": fin_actual,
             }
         )
 
-        if inicio + tamano_chunk >= len(pasajes):
+    for indice, pasaje in enumerate(pasajes):
+        if pasaje["encabezado"] != encabezado_actual and pasajes_actuales:
+            cerrar_capitulo(indice - 1)
+            encabezado_actual = pasaje["encabezado"]
+            inicio_actual = indice
+            pasajes_actuales = [pasaje]
+            continue
+
+        pasajes_actuales.append(pasaje)
+
+    if pasajes_actuales:
+        cerrar_capitulo(len(pasajes) - 1)
+
+    return capitulos
+
+
+def obtener_rango_pasajes_en_chunk(
+    rangos_pasajes: list[dict[str, int]],
+    inicio_palabras: int,
+    fin_palabras: int,
+) -> tuple[int, int]:
+    inicio = rangos_pasajes[0]["indice"]
+    fin = rangos_pasajes[-1]["indice"]
+
+    for rango in rangos_pasajes:
+        if rango["fin_palabras"] > inicio_palabras:
+            inicio = rango["indice"]
+            break
+
+    for rango in rangos_pasajes:
+        if rango["inicio_palabras"] < fin_palabras:
+            fin = rango["indice"]
+        else:
+            break
+
+    return inicio, fin
+
+
+def construir_chunks_de_capitulo(
+    capitulo: dict[str, object],
+    tokens_por_chunk: int,
+    solape_tokens: int,
+) -> list[dict[str, str | int]]:
+    palabras = list(capitulo["palabras"])
+    if not palabras:
+        return []
+
+    paso = max(1, tokens_por_chunk - solape_tokens)
+    chunks: list[dict[str, str | int]] = []
+    rangos_pasajes = list(capitulo["rangos_pasajes"])
+
+    for inicio in range(0, len(palabras), paso):
+        palabras_chunk = palabras[inicio : inicio + tokens_por_chunk]
+        if not palabras_chunk:
+            continue
+
+        fin = inicio + len(palabras_chunk)
+        inicio_pasaje, fin_pasaje = obtener_rango_pasajes_en_chunk(
+            rangos_pasajes,
+            inicio_palabras=inicio,
+            fin_palabras=fin,
+        )
+        chunks.append(
+            {
+                "encabezado": str(capitulo["encabezado"]),
+                "texto": " ".join(palabras_chunk),
+                "inicio": inicio_pasaje,
+                "fin": fin_pasaje,
+            }
+        )
+
+        if fin >= len(palabras):
             break
 
     return chunks
-
-
 def construir_chunks_por_tokens(
     pasajes: list[dict[str, str]],
     tokens_por_chunk: int = TOKENS_POR_CHUNK,
@@ -102,70 +152,29 @@ def construir_chunks_por_tokens(
     if not pasajes:
         return []
 
-    tokens_por_pasaje = [
-        contar_tokens_aproximados(pasaje["texto"]) for pasaje in pasajes
-    ]
     chunks: list[dict[str, str | int]] = []
-    inicio = 0
 
-    while inicio < len(pasajes):
-        fin = inicio
-        tokens_acumulados = 0
-
-        while fin < len(pasajes) and (
-            tokens_acumulados < tokens_por_chunk or fin == inicio
-        ):
-            tokens_acumulados += tokens_por_pasaje[fin]
-            fin += 1
-
-        grupo = pasajes[inicio:fin]
-        texto = "\n".join(pasaje["texto"] for pasaje in grupo)
-        chunks.append(
-            {
-                "encabezado": combinar_encabezados(grupo),
-                "texto": texto,
-                "inicio": inicio,
-                "fin": fin - 1,
-            }
+    for capitulo in construir_capitulos(pasajes):
+        chunks.extend(
+            construir_chunks_de_capitulo(
+                capitulo,
+                tokens_por_chunk=tokens_por_chunk,
+                solape_tokens=solape_tokens,
+            )
         )
-
-        if fin >= len(pasajes):
-            break
-
-        nuevo_inicio = fin
-        tokens_overlap_acumulados = 0
-
-        while nuevo_inicio > inicio and tokens_overlap_acumulados < solape_tokens:
-            nuevo_inicio -= 1
-            tokens_overlap_acumulados += tokens_por_pasaje[nuevo_inicio]
-
-        if nuevo_inicio <= inicio:
-            nuevo_inicio = inicio + 1
-
-        inicio = nuevo_inicio
 
     return chunks
 
 
 def construir_chunks_semanticos(
     pasajes: list[dict[str, str]],
-    tamano_chunk: int = TAMANO_CHUNK,
-    solape_chunk: int = SOLAPE_CHUNK,
-    estrategia_chunking: str = CHUNKING_PASAJES,
     tokens_por_chunk: int = TOKENS_POR_CHUNK,
     solape_tokens: int = SOLAPE_TOKENS,
 ) -> list[dict[str, str | int]]:
-    if estrategia_chunking == CHUNKING_TOKENS:
-        return construir_chunks_por_tokens(
-            pasajes,
-            tokens_por_chunk=tokens_por_chunk,
-            solape_tokens=solape_tokens,
-        )
-
-    return construir_chunks_por_pasajes(
+    return construir_chunks_por_tokens(
         pasajes,
-        tamano_chunk=tamano_chunk,
-        solape_chunk=solape_chunk,
+        tokens_por_chunk=tokens_por_chunk,
+        solape_tokens=solape_tokens,
     )
 
 
@@ -260,26 +269,17 @@ def cargar_cache_embeddings(
 def construir_indice_semantico(
     pasajes: list[dict[str, str]],
     modelo: str = MODELO_EMBEDDINGS,
-    tamano_chunk: int = TAMANO_CHUNK,
-    solape_chunk: int = SOLAPE_CHUNK,
-    estrategia_chunking: str = CHUNKING_PASAJES,
     tokens_por_chunk: int = TOKENS_POR_CHUNK,
     solape_tokens: int = SOLAPE_TOKENS,
     regenerar: bool = False,
 ) -> tuple[list[dict[str, str | int]], np.ndarray]:
     chunks = construir_chunks_semanticos(
         pasajes,
-        tamano_chunk=tamano_chunk,
-        solape_chunk=solape_chunk,
-        estrategia_chunking=estrategia_chunking,
         tokens_por_chunk=tokens_por_chunk,
         solape_tokens=solape_tokens,
     )
     ruta_cache = obtener_ruta_cache_embeddings(
         modelo,
-        tamano_chunk,
-        solape_chunk,
-        estrategia_chunking=estrategia_chunking,
         tokens_por_chunk=tokens_por_chunk,
         solape_tokens=solape_tokens,
     )
@@ -315,7 +315,6 @@ def buscar_pasajes_semanticos(
     consulta: str,
     limite: int = LIMITE_RESULTADOS,
     modelo: str = MODELO_EMBEDDINGS,
-    estrategia_chunking: str = CHUNKING_PASAJES,
     tokens_por_chunk: int = TOKENS_POR_CHUNK,
     solape_tokens: int = SOLAPE_TOKENS,
     regenerar: bool = False,
@@ -326,7 +325,6 @@ def buscar_pasajes_semanticos(
     chunks, embeddings = construir_indice_semantico(
         pasajes,
         modelo=modelo,
-        estrategia_chunking=estrategia_chunking,
         tokens_por_chunk=tokens_por_chunk,
         solape_tokens=solape_tokens,
         regenerar=regenerar,
@@ -353,33 +351,3 @@ def buscar_pasajes_semanticos(
         )
 
     return resultados, modelo
-
-
-def formatear_resultados_semanticos(
-    consulta: str,
-    resultados: list[dict[str, str | float | int]],
-    modelo: str,
-    limite: int = LIMITE_RESULTADOS,
-) -> str:
-    if not resultados:
-        return f'No se han encontrado pasajes semanticamente similares a "{consulta}".'
-
-    lineas = [
-        f'Se han encontrado {len(resultados)} pasajes semanticamente similares a "{consulta}".',
-        f"Modelo de embeddings: {modelo}.",
-        "",
-    ]
-
-    for indice, resultado in enumerate(resultados[:limite], start=1):
-        lineas.append(
-            f"{indice}. {resultado['encabezado']} (score: {resultado['score']:.4f})"
-        )
-        lineas.append(str(resultado["texto"]))
-        lineas.append("")
-
-    if len(resultados) > limite:
-        lineas.append(
-            f"Se muestran solo los {limite} primeros resultados de {len(resultados)}."
-        )
-
-    return "\n".join(lineas).rstrip()

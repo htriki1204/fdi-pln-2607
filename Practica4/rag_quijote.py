@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 
 import ollama
 
-from buscar_quijote import LIMITE_RESULTADOS, buscar_pasajes_con_modo
-from busqueda_semantica import (
-    CHUNKING_TOKENS,
-    MODELO_EMBEDDINGS,
-    buscar_pasajes_semanticos,
-)
+from buscar_quijote import buscar_pasajes_con_modo
+from busqueda_semantica import buscar_pasajes_semanticos
 
 
-MODELO_RAG = os.getenv("FDI_PLN_P4_RAG_MODEL", "llama3.2:latest")
+MODELO_RAG = os.getenv("FDI_PLN_P4_RAG_MODEL", "llama3.2:3b")
 MAX_RESULTADOS_CLASICOS = 3
-MAX_RESULTADOS_SEMANTICOS = 0
+MAX_RESULTADOS_SEMANTICOS = 2
 
 
 @lru_cache(maxsize=1)
@@ -28,18 +25,17 @@ def construir_contexto_rag(
     pasajes: list[dict[str, str]],
     max_clasicos: int = MAX_RESULTADOS_CLASICOS,
     max_semanticos: int = MAX_RESULTADOS_SEMANTICOS,
-) -> tuple[list[dict[str, str]], str]:
+) -> list[dict[str, str]]:
     if max_clasicos > 0:
-        resultados_clasicos, modo_clasico = buscar_pasajes_con_modo(pasajes, consulta)
+        resultados_clasicos, _ = buscar_pasajes_con_modo(pasajes, consulta)
     else:
-        resultados_clasicos, modo_clasico = [], "and"
+        resultados_clasicos = []
 
     if max_semanticos > 0:
         resultados_semanticos, _ = buscar_pasajes_semanticos(
             pasajes,
             consulta,
             limite=max_semanticos,
-            estrategia_chunking=CHUNKING_TOKENS,
         )
     else:
         resultados_semanticos = []
@@ -75,7 +71,7 @@ def construir_contexto_rag(
             }
         )
 
-    return contexto, modo_clasico
+    return contexto
 
 
 def construir_prompt_contexto(contexto: list[dict[str, str]]) -> str:
@@ -95,18 +91,27 @@ def construir_prompt_contexto(contexto: list[dict[str, str]]) -> str:
     return "\n\n".join(bloques)
 
 
+def limpiar_respuesta_rag(texto: str) -> str:
+    texto_limpio = re.sub(
+        r"\n+\s*Referencias usadas:.*\Z",
+        "",
+        texto.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return texto_limpio.strip()
+
+
 def responder_con_rag(
     consulta: str,
     pasajes: list[dict[str, str]],
     modelo: str = MODELO_RAG,
 ) -> dict[str, object]:
-    contexto, modo_clasico = construir_contexto_rag(consulta, pasajes)
+    contexto = construir_contexto_rag(consulta, pasajes)
     if not contexto:
         return {
             "respuesta": "No he encontrado contexto suficiente en el Quijote para responder con seguridad.",
             "contexto": [],
             "modelo": modelo,
-            "modo_clasico": modo_clasico,
         }
 
     prompt_contexto = construir_prompt_contexto(contexto)
@@ -119,7 +124,8 @@ def responder_con_rag(
                 "content": (
                     "Responde en espanol usando solo el contexto recuperado del Quijote. "
                     "No inventes informacion. Si el contexto no basta, dilo claramente. "
-                    "Cita siempre las referencias usadas entre corchetes, por ejemplo [C1] o [S2]."
+                    "Cita las referencias usadas entre corchetes dentro de la respuesta, "
+                    "por ejemplo [C1] o [S2], pero no anadas una seccion final de referencias."
                 ),
             },
             {
@@ -128,8 +134,7 @@ def responder_con_rag(
                     f"Consulta del usuario: {consulta}\n\n"
                     "Contexto recuperado:\n"
                     f"{prompt_contexto}\n\n"
-                    "Da una respuesta breve pero completa, y termina con una linea "
-                    "de referencias usadas."
+                    "Da una respuesta breve pero completa."
                 ),
             },
         ],
@@ -137,30 +142,7 @@ def responder_con_rag(
     )
 
     return {
-        "respuesta": respuesta.message.content.strip(),
+        "respuesta": limpiar_respuesta_rag(respuesta.message.content),
         "contexto": contexto,
         "modelo": modelo,
-        "modo_clasico": modo_clasico,
     }
-
-
-def formatear_respuesta_rag(resultado_rag: dict[str, object]) -> str:
-    respuesta = str(resultado_rag["respuesta"])
-    contexto = list(resultado_rag["contexto"])
-    modelo = str(resultado_rag["modelo"])
-
-    lineas = [
-        "Respuesta RAG",
-        f"Modelo: {modelo}",
-        "",
-        respuesta,
-    ]
-
-    if contexto:
-        lineas.extend(["", "Pasajes aportados al modelo:", ""])
-        for entrada in contexto[:LIMITE_RESULTADOS]:
-            lineas.append(
-                f"[{entrada['referencia']}] {entrada['encabezado']} ({entrada['fuente']})"
-            )
-
-    return "\n".join(lineas).rstrip()
