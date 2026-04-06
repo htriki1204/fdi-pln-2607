@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import sysconfig
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,7 +29,22 @@ def obtener_ruta_cache_embeddings(
     archivo = (
         f"embeddings_quijote_{nombre}_tokens_{tokens_por_chunk}_{solape_tokens}.npz"
     )
-    return Path(__file__).resolve().with_name(archivo)
+    candidatas = [
+        Path(__file__).resolve().with_name(archivo),
+        Path.cwd() / archivo,
+        Path(sysconfig.get_paths().get("data", "")) / archivo,
+        Path(sys.prefix) / archivo,
+    ]
+    vistas: set[Path] = set()
+
+    for candidata in candidatas:
+        if candidata in vistas:
+            continue
+        vistas.add(candidata)
+        if candidata.exists():
+            return candidata
+
+    return Path.cwd() / archivo
 
 
 def construir_capitulos(
@@ -144,6 +161,8 @@ def construir_chunks_de_capitulo(
             break
 
     return chunks
+
+
 def construir_chunks_por_tokens(
     pasajes: list[dict[str, str]],
     tokens_por_chunk: int = TOKENS_POR_CHUNK,

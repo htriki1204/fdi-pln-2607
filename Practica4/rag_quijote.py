@@ -101,6 +101,20 @@ def limpiar_respuesta_rag(texto: str) -> str:
     return texto_limpio.strip()
 
 
+def asegurar_referencias_en_respuesta(
+    texto: str,
+    contexto: list[dict[str, str]],
+) -> str:
+    if re.search(r"\[(?:C|S)\d+\]", texto):
+        return texto
+
+    referencias = " ".join(f"[{entrada['referencia']}]" for entrada in contexto)
+    if not referencias:
+        return texto
+
+    return f"{texto}\n\nReferencias: {referencias}"
+
+
 def responder_con_rag(
     consulta: str,
     pasajes: list[dict[str, str]],
@@ -142,7 +156,10 @@ def responder_con_rag(
     )
 
     return {
-        "respuesta": limpiar_respuesta_rag(respuesta.message.content),
+        "respuesta": asegurar_referencias_en_respuesta(
+            limpiar_respuesta_rag(respuesta.message.content),
+            contexto,
+        ),
         "contexto": contexto,
         "modelo": modelo,
     }

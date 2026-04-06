@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import html
 import re
+import sys
+import sysconfig
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -22,16 +24,27 @@ PATRON_ETIQUETAS = re.compile(r"<[^>]+>")
 
 
 def obtener_ruta_quijote() -> Path:
+    nombre = "2000-h.htm"
     candidatas = [
-        Path(__file__).resolve().with_name("2000-h.htm"),
-        Path.cwd() / "2000-h.htm",
+        Path(__file__).resolve().with_name(nombre),
+        Path.cwd() / nombre,
+        Path(sysconfig.get_paths().get("data", "")) / nombre,
+        Path(sys.prefix) / nombre,
     ]
+    vistas: set[Path] = set()
+    candidatas_unicas: list[Path] = []
 
     for candidata in candidatas:
+        if candidata in vistas:
+            continue
+        vistas.add(candidata)
+        candidatas_unicas.append(candidata)
+
+    for candidata in candidatas_unicas:
         if candidata.exists():
             return candidata
 
-    return candidatas[0]
+    return candidatas_unicas[0]
 
 
 RUTA_QUIJOTE = obtener_ruta_quijote()
