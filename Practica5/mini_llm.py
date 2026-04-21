@@ -8,10 +8,21 @@ from torch import Tensor, nn
 
 
 class Attention(nn.Module):
-    def __init__(self, d_model: int, n_tokens: int, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        n_tokens: int,
+        n_heads: int = 1,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
 
+        if d_model % n_heads != 0:
+            raise ValueError("d_model debe ser divisible por n_heads.")
+
         self.d_model = d_model
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
         self.query = nn.Linear(d_model, d_model, bias=False)
         self.key = nn.Linear(d_model, d_model, bias=False)
         self.value = nn.Linear(d_model, d_model, bias=False)
@@ -23,19 +34,24 @@ class Attention(nn.Module):
         self.register_buffer("causal_mask", mask, persistent=False)
 
     def forward(self, x: Tensor) -> Tensor:
-        _, seq_len, _ = x.shape
+        batch_size, seq_len, _ = x.shape
 
         q = self.query(x)
         k = self.key(x)
         v = self.value(x)
 
-        attention_scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.d_model)
+        q = q.view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
+
+        attention_scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         causal_mask = self.causal_mask[:seq_len, :seq_len]
         attention_scores = attention_scores.masked_fill(causal_mask, float("-inf"))
 
         attention_weights = F.softmax(attention_scores, dim=-1)
         attention_weights = self.dropout(attention_weights)
         context = attention_weights @ v
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
         return self.proj(context)
 
 
@@ -55,10 +71,21 @@ class FeedForward(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, n_tokens: int, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        n_tokens: int,
+        n_heads: int = 1,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.ln_1 = nn.LayerNorm(d_model)
-        self.attention = Attention(d_model=d_model, n_tokens=n_tokens, dropout=dropout)
+        self.attention = Attention(
+            d_model=d_model,
+            n_tokens=n_tokens,
+            n_heads=n_heads,
+            dropout=dropout,
+        )
         self.ln_2 = nn.LayerNorm(d_model)
         self.ffn = FeedForward(d_model, dropout)
 
@@ -74,6 +101,7 @@ class MiniLLM(nn.Module):
         vocab_size: int,
         n_tokens: int,
         d_model: int = 128,
+        n_heads: int = 1,
         num_layers: int = 2,
         dropout: float = 0.0,
     ) -> None:
@@ -87,7 +115,12 @@ class MiniLLM(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.blocks = nn.ModuleList(
             [
-                TransformerBlock(d_model=d_model, n_tokens=n_tokens, dropout=dropout)
+                TransformerBlock(
+                    d_model=d_model,
+                    n_tokens=n_tokens,
+                    n_heads=n_heads,
+                    dropout=dropout,
+                )
                 for _ in range(num_layers)
             ]
         )

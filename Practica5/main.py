@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         help="Dimension de los embeddings",
     )
     parser.add_argument(
+        "--n-heads",
+        type=int,
+        default=4,
+        help="Numero de cabezas de atencion",
+    )
+    parser.add_argument(
         "--num-layers",
         type=int,
         default=2,
@@ -135,6 +141,7 @@ def main() -> None:
         vocab_size=tokenizer.vocab_size,
         n_tokens=n_tokens,
         d_model=args.d_model,
+        n_heads=args.n_heads,
         num_layers=args.num_layers,
         dropout=0.1,
     ).to(device)
