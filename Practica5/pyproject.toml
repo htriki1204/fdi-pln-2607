@@ -1,0 +1,21 @@
+[project]
+name = "fdi-pln-2607-p5"
+version = "0.1.0"
+description = "Mini LLM con tokenizer BPE y atencion causal"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "torch",
+]
+
+[project.scripts]
+fdi-pln-2607-p5 = "main:main"
+practica5 = "main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "mini_llm", "tokenizer"]
