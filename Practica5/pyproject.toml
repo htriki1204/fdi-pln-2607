@@ -1,21 +1,37 @@
 [project]
 name = "fdi-pln-2607-p5"
-version = "0.1.0"
-description = "Mini LLM con tokenizer BPE y atencion causal"
+version = "1.0"
+description = "Practica 5 de PLN con LLM causal, NER y grid search"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "numpy",
     "torch",
+    "typer",
 ]
 
 [project.scripts]
-fdi-pln-2607-p5 = "main:main"
-practica5 = "main:main"
+fdi-pln-2607-p5 = "cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main", "mini_llm", "tokenizer"]
+py-modules = [
+    "attention",
+    "causal_llm",
+    "causal_train",
+    "checkpointing",
+    "cli",
+    "corpus",
+    "ner",
+    "tokenizer",
+    "transformer",
+]
+
+[tool.setuptools.packages.find]
+include = ["data"]
+
+[tool.setuptools.package-data]
+data = ["*.txt", "*.json", "*.tsv"]
