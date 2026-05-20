@@ -1,123 +1,120 @@
-from __future__ import annotations
+# Tokenizador BPE (Byte Pair Encoding) mínimo, entrenado sobre el texto."""
+#
+# PLN 2025/2026 (FDI UCM)
+# Antonio F. G. Sevilla <afgs@ucm.es>
+
 
 from collections import Counter
-from typing import Iterable
 
 
 class BPETokenizer:
-    """Byte Pair Encoding Tokenizer entrenado sobre un texto.
+    """Byte Pair Encoding entrenado sobre un texto.
 
-    Vocabulario inicial: caracteres unicos del texto. Durante el entrenamiento
-    se buscan los pares adyacentes mas frecuentes y se fusionan en nuevos tokens,
-    hasta 'vocab_size' veces"""
-    def __init__(self, special_tokens: Iterable[str] | None = None) -> None:
-        self.special_tokens = list(
-            special_tokens or ["<pad>", "<bos>", "<eos>", "<unk>"]
-        )
-        self.merges: list[tuple[str, str]] = []
-        self.token_to_id: dict[str, int] = {}
-        self.id_to_token: dict[int, str] = {}
+    Vocabulario inicial: caracteres unicos del texto. Durante el
+    entrenamiento se buscan los pares adyacentes mas frecuentes y se
+    fusionan en nuevos tokens, hasta alcanzar `vocab_size` tokens.
 
-    @property
-    def vocab_size(self) -> int:
-        return len(self.token_to_id)
+    NOTA: para ser BPE de verdad, tendríamos que hacerlo sobre bytes, no sobre
+    caracteres, pero para la práctica funciona bien.
+    """
 
-    @property
-    def pad_token_id(self) -> int:
-        return self.token_to_id["<pad>"]
+    def __init__(self, text=None, vocab_size=300):
+        self.vocab_size = vocab_size
+        self.vocab = []
+        self.tok2id = {}
+        self.merges = []  # lista de ((id_a, id_b), nuevo_id), para encode()
 
-    @property
-    def bos_token_id(self) -> int:
-        return self.token_to_id["<bos>"]
+        if text is not None:
+            self.train(text, vocab_size=vocab_size)
 
-    @property
-    def eos_token_id(self) -> int:
-        return self.token_to_id["<eos>"]
-
-    @property
-    def unk_token_id(self) -> int:
-        return self.token_to_id["<unk>"]
-
-    def train(self, text: str, vocab_size: int = 256) -> None:
+    def train(self, text, vocab_size=None):
         if not text:
-            raise ValueError("El tokenizer necesita texto para entrenarse.")
+            raise ValueError("El tokenizador necesita texto para entrenarse.")
 
-        base_tokens = sorted(set(text))
-        min_vocab_size = len(self.special_tokens) + len(base_tokens)
-        if vocab_size < min_vocab_size:
-            raise ValueError(
-                f"vocab_size={vocab_size} es demasiado pequeno. "
-                f"Necesitas al menos {min_vocab_size}."
-            )
+        self.vocab_size = vocab_size or self.vocab_size
+        # Inicializamos con caracteres encontrados en el texto
+        self.vocab = sorted(set(text))  # vocab[id] -> token string.
+        self.tok2id = {tok: i for i, tok in enumerate(self.vocab)}
 
-        sequence = list(text)
-        learned_tokens = set(base_tokens)
-        self.merges = []
+        tokens = [self.tok2id[c] for c in text]
+        self.merges = []  # lista de ((id_a, id_b), nuevo_id), para encode()
 
-        while len(self.special_tokens) + len(learned_tokens) < vocab_size:
-            pair_counts = Counter(zip(sequence, sequence[1:]))
-            if not pair_counts:
+        for new_id in range(len(self.vocab), self.vocab_size):
+            pairs = Counter(zip(tokens, tokens[1:]))
+            if not pairs:
+                break
+            best, count = pairs.most_common(1)[0]
+            if count < 2:
                 break
 
-            best_pair, frequency = pair_counts.most_common(1)[0]
-            if frequency < 2:
-                break
+            new_tok = self.vocab[best[0]] + self.vocab[best[1]]
+            self.tok2id[new_tok] = new_id
+            self.vocab.append(new_tok)
+            self.merges.append((best, new_id))
 
-            merged_token = "".join(best_pair)
-            sequence = self._merge_pair(sequence, best_pair, merged_token)
-            self.merges.append(best_pair)
-            learned_tokens.add(merged_token)
-
-        vocab = self.special_tokens + sorted(learned_tokens, key=lambda token: (len(token), token))
-        self.token_to_id = {token: index for index, token in enumerate(vocab)}
-        self.id_to_token = {index: token for token, index in self.token_to_id.items()}
-
-    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
-        self._check_is_trained()
-
-        tokens = list(text)
-        for pair in self.merges:
-            merged_token = "".join(pair)
-            tokens = self._merge_pair(tokens, pair, merged_token)
-
-        token_ids = [self.token_to_id.get(token, self.unk_token_id) for token in tokens]
-
-        if add_special_tokens:
-            return [self.bos_token_id, *token_ids, self.eos_token_id]
-        return token_ids
-
-    def decode(self, token_ids: Iterable[int], skip_special_tokens: bool = True) -> str:
-        self._check_is_trained()
-
-        pieces: list[str] = []
-        for token_id in token_ids:
-            token = self.id_to_token.get(int(token_id), "<unk>")
-            if skip_special_tokens and token in self.special_tokens:
-                continue
-            pieces.append(token)
-        return "".join(pieces)
-
-    def _check_is_trained(self) -> None:
-        if not self.token_to_id:
-            raise RuntimeError("El tokenizer no esta entrenado todavia.")
+            tokens = self._apply_merge(tokens, best[0], best[1], new_id)
 
     @staticmethod
-    def _merge_pair(
-        sequence: list[str], pair: tuple[str, str], merged_token: str
-    ) -> list[str]:
-        merged_sequence: list[str] = []
-        index = 0
-
-        while index < len(sequence):
-            if (
-                index < len(sequence) - 1
-                and sequence[index] == pair[0]
-                and sequence[index + 1] == pair[1]
-            ):
-                merged_sequence.append(merged_token)
-                index += 2
+    def _apply_merge(tokens, a, b, new_id):
+        """Reemplaza todas las ocurrencias del par (a, b) por new_id."""
+        result = []
+        i = 0
+        while i < len(tokens):
+            if i < len(tokens) - 1 and tokens[i] == a and tokens[i + 1] == b:
+                result.append(new_id)
+                i += 2
             else:
-                merged_sequence.append(sequence[index])
-                index += 1
+                result.append(tokens[i])
+                i += 1
+        return result
 
-        return merged_sequence
+    def encode(self, text):
+        """Codifica un texto aplicando los merges aprendidos."""
+        if not self.vocab:
+            raise RuntimeError("El tokenizador no esta entrenado todavia.")
+        tokens = [self.tok2id.get(c, 0) for c in text]
+        for (a, b), new_id in self.merges:
+            tokens = self._apply_merge(tokens, a, b, new_id)
+        return tokens
+
+    def decode(self, ids):
+        """Decodifica una lista de ids a texto."""
+        if not self.vocab:
+            raise RuntimeError("El tokenizador no esta entrenado todavia.")
+        return "".join(self.vocab[i] for i in ids)
+
+    def state_dict(self):
+        return {
+            "vocab_size": self.vocab_size,
+            "vocab": self.vocab,
+            "tok2id": self.tok2id,
+            "merges": self.merges,
+        }
+
+    @classmethod
+    def from_state_dict(cls, state):
+        tokenizer = cls()
+        tokenizer.vocab_size = state["vocab_size"]
+        tokenizer.vocab = list(state["vocab"])
+        tokenizer.tok2id = {tok: int(idx) for tok, idx in state["tok2id"].items()}
+        tokenizer.merges = [
+            ((int(a), int(b)), int(new_id)) for (a, b), new_id in state["merges"]
+        ]
+        return tokenizer
+
+    def __repr__(self):
+        pretty = [t.replace("\n", "\\n").replace(" ", "▁") for t in self.vocab]
+        joined = "', '".join(pretty)
+        return f"{len(self.vocab)} tokens: ['{joined}']"
+
+
+# Si ejecutamos este módulo directamente, probamos el tokenizador
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+
+    files_path = Path(sys.argv[1] if len(sys.argv) > 1 else "resources")
+    vocab_size = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+    textos = "\n\n".join(open(p).read() for p in files_path.glob("*.txt"))
+    tokenizer = BPETokenizer(textos, vocab_size=vocab_size)
+    print(tokenizer)
