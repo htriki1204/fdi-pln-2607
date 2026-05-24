@@ -139,7 +139,10 @@ def train_causal(
 
 @app.command("generate")
 def generate_text(
-    weights_path: Path = typer.Option(..., help="Checkpoint causal .pth."),
+    weights_path: Path = typer.Option(
+        Path("p5_causal_2607.pth"),
+        help="Checkpoint causal .pth (default: p5_causal_2607.pth en el cwd).",
+    ),
     prompt: str = typer.Option(..., help="Prompt de entrada."),
     max_tokens: int = typer.Option(120, help="Maximo de tokens nuevos."),
     temperature: float = typer.Option(0.8, help="Temperatura de muestreo."),
@@ -280,7 +283,10 @@ def train_ner(
 
 @app.command("extract-entities")
 def extract_entities(
-    weights_path: Path = typer.Option(..., help="Checkpoint NER .pth."),
+    weights_path: Path = typer.Option(
+        Path("p5_ner_2607.pth"),
+        help="Checkpoint NER .pth (default: p5_ner_2607.pth en el cwd).",
+    ),
     text_path: Path = typer.Option(..., help="Fichero de texto a analizar."),
 ) -> None:
     device = choose_device()
