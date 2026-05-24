@@ -67,6 +67,32 @@ El codigo puede regenerar los embeddings bajo demanda si la cache no existe o si
 ## Nota sobre el corpus
 En [Practica4/documentation.md](/Users/alewar/Documents/Universidad/Cuarto/pln/fdi-pln-2607/Practica4/documentation.md) se documenta el recorte manual del HTML de Gutenberg para dejar solo los bloques relevantes del Quijote.
 
+## Practica 5 - Mini LLM + NER (Grupo 7)
+
+- Hamza Triki
+- Alvaro Ferreno Iglesias
+
+LLM causal sencillo construido desde cero (BPE + transformer propio) entrenado
+sobre *Alice in Wonderland*, con una cabeza secundaria para reconocimiento de
+entidades nombradas (PER / LOC).
+
+### Ejecucion
+
+```bash
+cd Practica5
+uv run fdi-pln-2607-p5 --help
+```
+
+Comandos principales:
+
+- `train-causal` y `train-ner` para entrenar cada parte.
+- `generate --weights-path <ruta.pth> --prompt "..."` para generar texto.
+- `extract-entities --weights-path <ruta.pth> --text-path <fichero.txt>` para
+  listar entidades en un texto.
+- `grid-search-causal` y `grid-search-ner` para explorar hiperparametros.
+
+Mas detalle en [Practica5/README.md](Practica5/README.md).
+
 ## Historico
 
 - Practica 1: agente para Butler en [Practica1]
