@@ -135,29 +135,71 @@ class NERLLM(Transformer):
 
     @torch.no_grad()
     def predict_entities(self, words, tokenizer):
-        """Predice etiquetas BIO sobre una lista de **palabras**."""
+        """Predice etiquetas BIO sobre una lista de **palabras**.
+
+        Trabaja a nivel palabra: para cada palabra reune las etiquetas
+        predichas por sus sub-tokens BPE y elige una representante (la primera
+        no-O, si existe). Despues agrupa palabras consecutivas con la misma
+        entidad para devolver la entidad completa.
+
+        Si el alineado BPE supera `max_seq_len`, trocea internamente por
+        palabras para no superar la ventana de contexto.
+        """
         self.eval()
-        ids, _ = align_to_bpe(words, ["O"] * len(words), tokenizer)
+        ids_full, _ = align_to_bpe(words, ["O"] * len(words), tokenizer)
+        if len(ids_full) > self.max_seq_len:
+            entities = []
+            for chunk in _chunk_words(words, tokenizer, self.max_seq_len):
+                entities.extend(self.predict_entities(chunk, tokenizer))
+            return entities
+
+        # Reconstruimos input_ids junto con el rango de sub-tokens de cada
+        # palabra (paralelo a `align_to_bpe`).
+        token_ids = []
+        word_spans = []
+        space_ids = tokenizer.encode(" ")
+        for i, word in enumerate(words):
+            if i > 0:
+                token_ids.extend(space_ids)
+            start = len(token_ids)
+            token_ids.extend(tokenizer.encode(word))
+            word_spans.append((start, len(token_ids)))
+
         device = next(self.parameters()).device
-        input_ids = torch.tensor([ids], device=device)
+        input_ids = torch.tensor([token_ids], device=device)
         attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
         logits, _ = self(input_ids, attention_mask=attention_mask)
-        pred_labels = [ID2LABEL[p] for p in logits.argmax(-1)[0].tolist()]
+        sub_preds = [ID2LABEL[p] for p in logits.argmax(-1)[0].tolist()]
 
+        # Etiqueta por palabra: preferimos la cabeza si es no-O; si la cabeza
+        # es O pero algun sub-token interior predice entidad, tomamos esa.
+        # Si hay B- y I- mezclados preferimos B-.
+        word_labels = []
+        for start, end in word_spans:
+            sub_labels = sub_preds[start:end]
+            non_o = [lab for lab in sub_labels if lab != "O"]
+            if not non_o:
+                word_labels.append("O")
+                continue
+            b_labels = [lab for lab in non_o if lab.startswith("B-")]
+            word_labels.append(b_labels[0] if b_labels else non_o[0])
+
+        # Reagrupamos palabras BIO consecutivas en entidades.
         entities = []
         i = 0
-        while i < len(ids):
-            if pred_labels[i] != "O":
-                kind = pred_labels[i].split("-")[1]
-                j = i + 1
-                while j < len(ids) and pred_labels[j] == f"I-{kind}":
-                    j += 1
-                text = tokenizer.decode(ids[i:j]).strip()
-                if text:
-                    entities.append((text, kind))
-                i = j
-            else:
+        while i < len(words):
+            lab = word_labels[i]
+            if lab == "O":
                 i += 1
+                continue
+            kind = lab.split("-")[1]
+            j = i + 1
+            while j < len(words) and word_labels[j] == f"I-{kind}":
+                j += 1
+            text = " ".join(words[i:j]).strip()
+            if text:
+                entities.append((text, kind))
+            i = j
         return entities
 
 

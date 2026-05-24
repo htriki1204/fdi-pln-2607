@@ -36,7 +36,7 @@ app = typer.Typer(
 PACKAGE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(str(files("data")))
 DEFAULT_CORPUS = DATA_DIR / "alice_in_wonderland.txt"
-DEFAULT_NER_DATASET = DATA_DIR / "ner_dataset-2.json"
+DEFAULT_NER_DATASET = DATA_DIR / "ner_dataset.json"
 
 
 def _parse_int_list(raw: str) -> list[int]:

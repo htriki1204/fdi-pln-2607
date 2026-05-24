@@ -48,13 +48,10 @@ class CausalLLM(Transformer):
         """
         x = super().forward(idx, causal=True)
 
-        # Calculamos los logits para cada elemento del vocabulario
-        # logits = self.lm_head(x)
-
-        logits = x @ self.tok_emb.weight.T  #  (5,4) (4,300) -> (2,5,300)
-
-        ## logits ¿ que token del vocabulario creo que deberia venir aqui),
-        ## targets es la respuesta correcta, tinene formas (barch_size, n-tokens)
+        # Calculamos los logits para cada elemento del vocabulario.
+        # lm_head.weight comparte memoria con tok_emb.weight (weight tying),
+        # asi que esto equivale a x @ tok_emb.weight.T pero usando la capa.
+        logits = self.lm_head(x)
 
         if targets is None:
             return logits, None
